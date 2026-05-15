@@ -8,6 +8,8 @@ import {
   getExpectedFolder,
   getFolderName,
   clearConfigCache,
+  getValidateIgnore,
+  DEFAULT_VALIDATE_IGNORE,
   type SynapseConfig,
 } from "../../src/lib/config.js";
 
@@ -315,6 +317,83 @@ describe("config module", () => {
       // Load again - should get new config
       const config = loadConfig(tmpDir);
       expect(config?.branding?.siteName).toBe("Cache Cleared");
+    });
+  });
+
+  describe("getValidateIgnore", () => {
+    it("should return only the built-in defaults when no config exists", () => {
+      const ignore = getValidateIgnore(tmpDir);
+      expect(ignore).toEqual(DEFAULT_VALIDATE_IGNORE);
+    });
+
+    it("should return the built-in defaults when validate.ignore is absent", () => {
+      const configData: SynapseConfig = {
+        branding: { siteName: "No Validate Block" },
+      };
+
+      fs.writeFileSync(
+        path.join(tmpDir, "synapse.config.json"),
+        JSON.stringify(configData, null, 2)
+      );
+
+      const ignore = getValidateIgnore(tmpDir);
+      expect(ignore).toEqual(DEFAULT_VALIDATE_IGNORE);
+    });
+
+    it("should return the built-in defaults when validate.ignore is an empty array", () => {
+      const configData: SynapseConfig = {
+        validate: { ignore: [] },
+      };
+
+      fs.writeFileSync(
+        path.join(tmpDir, "synapse.config.json"),
+        JSON.stringify(configData, null, 2)
+      );
+
+      const ignore = getValidateIgnore(tmpDir);
+      expect(ignore).toEqual(DEFAULT_VALIDATE_IGNORE);
+    });
+
+    it("should merge custom validate.ignore patterns with the defaults", () => {
+      const configData: SynapseConfig = {
+        validate: {
+          ignore: ["**/210_QA-Memory/**", "**/drafts/**"],
+        },
+      };
+
+      fs.writeFileSync(
+        path.join(tmpDir, "synapse.config.json"),
+        JSON.stringify(configData, null, 2)
+      );
+
+      const ignore = getValidateIgnore(tmpDir);
+      // Defaults are preserved...
+      for (const pattern of DEFAULT_VALIDATE_IGNORE) {
+        expect(ignore).toContain(pattern);
+      }
+      // ...and custom patterns are appended.
+      expect(ignore).toContain("**/210_QA-Memory/**");
+      expect(ignore).toContain("**/drafts/**");
+      expect(ignore).toHaveLength(DEFAULT_VALIDATE_IGNORE.length + 2);
+    });
+
+    it("should de-duplicate a custom pattern that matches a default", () => {
+      const configData: SynapseConfig = {
+        validate: {
+          ignore: ["**/templates/**", "**/drafts/**"],
+        },
+      };
+
+      fs.writeFileSync(
+        path.join(tmpDir, "synapse.config.json"),
+        JSON.stringify(configData, null, 2)
+      );
+
+      const ignore = getValidateIgnore(tmpDir);
+      // "**/templates/**" is already a default, so it appears exactly once.
+      expect(ignore.filter((p) => p === "**/templates/**")).toHaveLength(1);
+      expect(ignore).toContain("**/drafts/**");
+      expect(ignore).toHaveLength(DEFAULT_VALIDATE_IGNORE.length + 1);
     });
   });
 });

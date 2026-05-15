@@ -144,6 +144,24 @@ This allows projects to override individual schemas while falling back to the st
 }
 ```
 
+### Validation Ignore Paths
+
+By default `synapse validate` discovers files while ignoring
+`node_modules`, `.git`, `templates/`, and `index.md`. Use `validate.ignore`
+to exclude additional glob patterns -- for example a free-form documentation
+subsection that intentionally does not follow a body grammar:
+
+```json
+{
+  "validate": {
+    "ignore": ["**/210_QA-Memory/**"]
+  }
+}
+```
+
+These patterns are **merged with** the built-in defaults (they do not
+replace them), so there is no need to repeat `node_modules` or `templates/`.
+
 ## Decap CMS (Self-hosted)
 - Serves under /admin
 - Configure backend for your Git provider (GitHub/GitLab/Gitea)

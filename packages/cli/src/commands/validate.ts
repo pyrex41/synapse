@@ -12,6 +12,7 @@ import {
 
 import { loadBodyRules, validateBody } from "../lib/bodyRules.js";
 import { validatePluginMarketplace } from "../lib/validate-plugins.js";
+import { getValidateIgnore } from "../lib/config.js";
 
 export interface ValidationIssue {
   type: "error" | "warning";
@@ -354,6 +355,10 @@ export async function validate(options: {
   const pattern = options.pattern || "**/*.md";
   const strict = options.strict !== undefined ? options.strict : true; // Default to strict mode
 
+  // Resolve ignore globs: built-in defaults merged with `validate.ignore`
+  // from synapse.config.json (if present).
+  const ignoreGlobs = getValidateIgnore(contentDir);
+
   const allIssues: ValidationIssue[] = [];
   let filesValidated = 0;
 
@@ -375,12 +380,7 @@ export async function validate(options: {
     const files = await glob(pattern, {
       cwd: contentDir,
       absolute: true,
-      ignore: [
-        "**/node_modules/**",
-        "**/.git/**",
-        "**/templates/**",
-        "index.md",
-      ],
+      ignore: ignoreGlobs,
     });
 
     // Build set of ALL existing files in the vault for cross-reference validation
@@ -401,12 +401,7 @@ export async function validate(options: {
     const allVaultFiles = await glob("**/*.md", {
       cwd: rootContentDir,
       absolute: true,
-      ignore: [
-        "**/node_modules/**",
-        "**/.git/**",
-        "**/templates/**",
-        "index.md",
-      ],
+      ignore: ignoreGlobs,
     });
 
     // Add all vault files to the set for cross-reference checking

@@ -2,6 +2,7 @@ import fsExtra from 'fs-extra';
 const fs = fsExtra;
 import * as path from 'path';
 import { validate } from '../../src/commands/validate';
+import { clearConfigCache } from '../../src/lib/config';
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 
 describe('Validate Command - Duplicate Detection', () => {
@@ -733,12 +734,83 @@ See also [[payments-api]] for system details.`
       );
       
       const result = await validate({ contentDir, schemaDir });
-      
-      const errors = result.issues.filter(i => 
-        i.type === 'error' && 
+
+      const errors = result.issues.filter(i =>
+        i.type === 'error' &&
         i.message.includes('Referenced document does not exist')
       );
       expect(errors).toHaveLength(0);
     });
+  });
+});
+
+describe('Validate Command - validate.ignore config', () => {
+  const testDir = path.join(process.cwd(), 'test-vault-validate-ignore');
+  const contentDir = path.join(testDir, 'content');
+  const schemaDir = path.join(contentDir, 'schemas');
+  const configPath = path.join(testDir, 'synapse.config.json');
+
+  beforeEach(async () => {
+    await fs.ensureDir(path.join(contentDir, '10_Policies'));
+    await fs.ensureDir(path.join(contentDir, '210_QA-Memory'));
+    await fs.ensureDir(schemaDir);
+
+    const realSchemaDir = path.resolve(process.cwd(), '../../schemas/frontmatter');
+    const schemas = await fs.readdir(realSchemaDir);
+    for (const schema of schemas) {
+      if (schema.endsWith('.json')) {
+        await fs.copy(
+          path.join(realSchemaDir, schema),
+          path.join(schemaDir, schema)
+        );
+      }
+    }
+
+    // A free-form doc that would fail strict body-grammar validation.
+    await fs.writeFile(
+      path.join(contentDir, '210_QA-Memory/free-form-notes.md'),
+      `# Free-form QA memory\n\nUnstructured notes that do not follow any body grammar.\n`
+    );
+    clearConfigCache();
+  });
+
+  afterEach(async () => {
+    await fs.remove(testDir);
+    clearConfigCache();
+  });
+
+  it('validates the free-form file when no validate.ignore is configured', async () => {
+    const result = await validate({ contentDir, schemaDir });
+    expect(result.filesValidated).toBe(1);
+  });
+
+  it('excludes paths matched by validate.ignore from validation', async () => {
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ validate: { ignore: ['**/210_QA-Memory/**'] } }, null, 2)
+    );
+    clearConfigCache();
+
+    const result = await validate({ contentDir, schemaDir });
+    expect(result.filesValidated).toBe(0);
+    expect(
+      result.issues.some(i => i.file?.includes('210_QA-Memory'))
+    ).toBe(false);
+  });
+
+  it('still validates non-ignored paths when validate.ignore is set', async () => {
+    await fs.writeFile(
+      path.join(contentDir, '10_Policies/POL001-data-protection.md'),
+      `---\ntype: policy\nid: data-protection\ntitle: Data Protection\nowner: Security Team\nsummary: A data protection policy\nscope: All systems\nrationale: Protect data\n---\n\n# Data Protection Policy`
+    );
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ validate: { ignore: ['**/210_QA-Memory/**'] } }, null, 2)
+    );
+    clearConfigCache();
+
+    const result = await validate({ contentDir, schemaDir });
+    // The QA-Memory file is skipped; the policy is still validated.
+    expect(result.filesValidated).toBe(1);
   });
 });

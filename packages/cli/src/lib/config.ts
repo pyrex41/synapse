@@ -28,6 +28,35 @@ export interface SynapseConfig {
     customDir?: string;
     loadBase?: boolean;
   };
+  validate?: {
+    /**
+     * Additional glob patterns to exclude from `synapse validate` file
+     * discovery. Merged with the built-in defaults
+     * (node_modules, .git, templates, index.md) -- does not replace them.
+     */
+    ignore?: string[];
+  };
+}
+
+/**
+ * Default glob patterns excluded from `synapse validate` file discovery.
+ */
+export const DEFAULT_VALIDATE_IGNORE: string[] = [
+  '**/node_modules/**',
+  '**/.git/**',
+  '**/templates/**',
+  'index.md',
+];
+
+/**
+ * Resolve the full list of ignore globs for `synapse validate`.
+ * Merges the built-in defaults with any `validate.ignore` patterns from
+ * synapse.config.json. Duplicate patterns are de-duplicated.
+ */
+export function getValidateIgnore(cwd?: string): string[] {
+  const config = loadConfig(cwd);
+  const custom = config?.validate?.ignore ?? [];
+  return [...new Set([...DEFAULT_VALIDATE_IGNORE, ...custom])];
 }
 
 let cachedConfig: SynapseConfig | null = null;
