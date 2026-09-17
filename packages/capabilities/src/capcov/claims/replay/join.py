@@ -307,10 +307,11 @@ class ReplayJoin:
                 "missing_premises": list(claim.missing_premises)}
 
 
-def build(directory: Path) -> ReplayJoin:
+def build(directory: Path, *, reviewer_admissions=()) -> ReplayJoin:
     receipt = json.loads((directory / replay_facts.RECEIPT_FILE).read_text(encoding="utf-8"))
     run = receipt["run"]
-    exported = replay_facts.export_bundle(directory, run=run)
+    exported = replay_facts.export_bundle(
+        directory, run=run, reviewer_admissions=reviewer_admissions)
     join = ReplayJoin(directory, receipt, run, exported)
     if exported.status != replay_facts.STATUS_COMPLETE:
         join.contract_findings = [f"exporter refused the receipt ({exported.status}): {m}" for m in exported.messages]

@@ -55,7 +55,9 @@ def _claim() -> Claim:
 
 
 def _build(*, snapshot: bool, pack: Bundle | None = None, validate: bool = True):
-    exported = replay_facts.export_bundle(cases.FIXTURE, run=cases.RUN, describes_indexes=(cases.INDEX,))
+    exported = replay_facts.export_bundle(
+        cases.FIXTURE, run=cases.RUN, describes_indexes=(cases.INDEX,),
+        reviewer_admissions=cases.reviewer_admissions(cases.FIXTURE))
     assert exported.status == replay_facts.STATUS_COMPLETE, exported.messages
     pack = pack or pack_bundle()
     decls = {decl.name: decl for decl in (*exported.bundle.relations, *pack.relations)}
@@ -213,7 +215,9 @@ class ReplayEvidencePolicyTest(unittest.TestCase):
             _build(snapshot=True, pack=unwitnessed)
 
     def test_combiner_refuses_a_stub_that_disagrees_with_the_pack(self) -> None:
-        exported = replay_facts.export_bundle(cases.FIXTURE, run=cases.RUN)
+        exported = replay_facts.export_bundle(
+            cases.FIXTURE, run=cases.RUN,
+            reviewer_admissions=cases.reviewer_admissions(cases.FIXTURE))
         pack = pack_bundle()
         widened = RelationDecl("op_qualified_rt",
                                (Column("index", "digest", True), Column("run", "symbol", True),

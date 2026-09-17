@@ -15,6 +15,16 @@ derivable (a semantic answer, not an error); 3 for a named operational
 failure of the Shen runtime (``ShenUnavailable`` / ``ShenFailure``), whose
 JSON carries ``operational_failure``; 2 for usage errors.
 
+Stage D's model checker (``claims/modelcheck.py``) is reached the same way::
+
+    capcov experiment claims modelcheck --model DIR [--out DIR] [--timeout S] [--keep]
+
+It typechecks the Shen domain model under ``DIR`` (``DIR/shen/load.shen``) and
+prints the certificate; with ``--out`` it writes ``modelcheck-certificate.json``,
+the transcript and, for a well-formed model only, ``model_well_formed.json``
+(the receipt file the replay exporter reads).  Exit 0 well-formed, 1 ill-formed
+(the failing judgements are in the JSON), 3 for a checker or runtime failure.
+
 The assumption registry (``claims/assumptions.py``) is reached the same way::
 
     capcov experiment claims assumptions registry   --receipt DIR [--out DIR]
@@ -54,7 +64,7 @@ from pathlib import Path
 
 from .ir import BundleIngestionError, bundle_from_json
 from .validation import ValidationError
-from . import jev, jev_binding, jev_patterns, shen
+from . import jev, jev_binding, jev_patterns, modelcheck, shen
 from .static.certificate import DEFAULT_MAX_DEPTH, DEFAULT_MAX_NODES
 
 
@@ -137,7 +147,9 @@ def _assumptions(args: argparse.Namespace) -> int:
     keep = False
     try:
         try:
-            join = replay_join.build(receipt)
+            admissions = (_load_json(args.reviewer_admissions)
+                          if args.reviewer_admissions else ())
+            join = replay_join.build(receipt, reviewer_admissions=admissions)
             if join.bundle is None:
                 _emit({"refusal": "the exporter refused the receipt",
                        "contract_findings": list(join.contract_findings)}, args.out)
@@ -175,6 +187,27 @@ def _assumptions(args: argparse.Namespace) -> int:
     finally:
         if owned and not keep:
             shutil.rmtree(replay_root, ignore_errors=True)
+
+
+def _modelcheck(args) -> int:
+    try:
+        result = modelcheck.check(args.model, out_dir=args.out, timeout=args.timeout, keep=args.keep)
+    except modelcheck.ModelcheckUnavailable:
+        _emit({"operational_failure": "modelcheck-unavailable",
+               "error": "the pinned model-checker runtime is unavailable"}, None)
+        return 3
+    except modelcheck.ModelcheckFailure:
+        _emit({"operational_failure": "modelcheck-failure",
+               "error": "the model-checker refused its input or execution"}, None)
+        return 3
+    document = {"verdict": result.status, "model": result.model_digest,
+                "judgements": [{"id": j.id, "verdict": j.verdict, "message": j.message} for j in result.judgements],
+                "skipped": [{"op": op, "reason": reason} for op, reason in result.skipped],
+                "certificate_sha256": result.certificate["certificate_sha256"],
+                "fact": result.fact, "workdir_retained": result.workdir is not None,
+                "elapsed_seconds": round(result.elapsed_seconds, 3)}
+    _emit(document, None)
+    return 0 if result.status == "well-formed" else 1
 
 
 def main(argv: list[str]) -> int:
@@ -229,12 +262,22 @@ def main(argv: list[str]) -> int:
         command.add_argument("--receipt", default=None, help="replay receipt directory (default: the committed fixture)")
         command.add_argument("--out", default=None, help="write the join artifacts to this directory")
         command.add_argument("--replay-root", default=None, help="differential replay directory for a kernel mismatch")
+        command.add_argument(
+            "--reviewer-admissions", default=None,
+            help="JSON array of external exact-certificate reviewer admissions")
         if name == "invalidate":
             command.add_argument("--drop", action="append", default=[], required=True, metavar="ID",
                                  help="an asm: id or the evidence id of an assumption row (repeatable)")
+    mc = claims_sub.add_parser("modelcheck", help="Stage D: typed well-formedness of a Shen domain model")
+    mc.add_argument("--model", required=True, help="model directory holding shen/load.shen")
+    mc.add_argument("--out", default=None, help="write the certificate, transcript and model_well_formed.json here")
+    mc.add_argument("--timeout", type=float, default=None, help="seconds before the runtime is killed")
+    mc.add_argument("--keep", action="store_true", help="keep the generated driver and units")
     args = parser.parse_args(argv)
     if args.tool == "assumptions":
         return _assumptions(args)
+    if args.tool == "modelcheck":
+        return _modelcheck(args)
 
     try:
         if args.tool == "jev":

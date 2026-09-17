@@ -77,6 +77,17 @@ class CompiledCheckerScriptTests(unittest.TestCase):
                                     *extra)
         return completed, out
 
+    def synthetic_admissions(self) -> Path:
+        [row] = json.loads((replay_join.SYNTHETIC_RECEIPT_DIR / "model_well_formed.json").read_text())["rows"]
+        path = self.workspace / "synthetic-reviewer-admissions.json"
+        path.write_text(json.dumps([{
+            "producer": "reviewer synthetic-test-policy",
+            "model": row["model"], "checker": row["checker"],
+            "checker_version": row["checker_version"],
+            "certificate": row["certificate"],
+        }]), encoding="utf-8")
+        return path
+
     def test_the_qualified_receipt_is_pending_the_checker_and_exits_five(self) -> None:
         """The real receipt clears every checkable premise; the Stage D certificate does not exist.
 
@@ -153,8 +164,11 @@ class CompiledCheckerScriptTests(unittest.TestCase):
         keeps the supported/complete path of the CLI exercised while Stage D does
         not exist.  It is never evidence about the port.
         """
-        completed, out = self.judge(replay_join.SYNTHETIC_RECEIPT_DIR, "synthetic",
-                                    "--require-supported", "delete-issue")
+        admissions = self.synthetic_admissions()
+        completed, out = self.judge(
+            replay_join.SYNTHETIC_RECEIPT_DIR, "synthetic",
+            "--reviewer-admissions", str(admissions),
+            "--require-supported", "delete-issue")
         self.assertEqual(completed.returncode, 0, completed.stderr[-2000:])
         document = json.loads((out / "judge.json").read_text())
         self.assertEqual(set(document), JUDGE_KEYS)
@@ -240,7 +254,9 @@ class CompiledCheckerScriptTests(unittest.TestCase):
         self.assertTrue(document["kernels"]["matched"], "the kernels still agree")
 
         # the synthetic receipt needs no requirement to be judged supported
-        completed, out = self.judge(replay_join.SYNTHETIC_RECEIPT_DIR, "no-requirement-synthetic")
+        completed, out = self.judge(
+            replay_join.SYNTHETIC_RECEIPT_DIR, "no-requirement-synthetic",
+            "--reviewer-admissions", str(self.synthetic_admissions()))
         self.assertEqual(completed.returncode, 0, completed.stderr[-2000:])
         document = json.loads((out / "judge.json").read_text())
         self.assertEqual(document["required_ops"], [])

@@ -241,7 +241,20 @@ def _unmet_ops(replayed: dict[str, Any], required: list[str]) -> list[str]:
     return [op for op in sorted(replayed) if not _op_is_supported(replayed[op])]
 
 
-def _read_join(receipt_dir: Path) -> replay_join.ReplayJoin:
+def _read_reviewer_admissions(path: str | None) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise replay_facts.ExportInputError(
+            "reviewer admissions could not be read as JSON") from exc
+    if not isinstance(document, list):
+        raise replay_facts.ExportInputError("reviewer admissions must be a JSON array")
+    return document
+
+
+def _read_join(receipt_dir: Path, reviewer_admissions=()) -> replay_join.ReplayJoin:
     """Build the join; the receipt's own I/O errors are the receipt's contract.
 
     Only a read of the receipt directory maps OSError to a contract finding.
@@ -250,7 +263,7 @@ def _read_join(receipt_dir: Path) -> replay_join.ReplayJoin:
     receipt.
     """
     try:
-        return replay_join.build(receipt_dir)
+        return replay_join.build(receipt_dir, reviewer_admissions=reviewer_admissions)
     except OSError as exc:
         raise replay_facts.ExportInputError(
             f"receipt directory could not be read: {receipt_dir}: {exc}") from exc
@@ -260,7 +273,8 @@ def judge(args: argparse.Namespace) -> int:
     receipt_dir = Path(args.receipt)
     out_dir = Path(args.out)
     required = list(dict.fromkeys(args.require_supported))
-    join = _read_join(receipt_dir)
+    admissions = _read_reviewer_admissions(getattr(args, "reviewer_admissions", None))
+    join = _read_join(receipt_dir, admissions)
     if join.bundle is None:
         document = _judge_document(join, required, verdict=VERDICT_CONTRACT_FINDING,
                                    exit_code=EXIT_CONTRACT, program_digest=None,
@@ -470,6 +484,9 @@ def build_parser() -> argparse.ArgumentParser:
     judge_parser.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR),
                               help="compiled-checker cache directory")
     judge_parser.add_argument("--souffle", default="souffle", help="the souffle executable")
+    judge_parser.add_argument(
+        "--reviewer-admissions", default=None,
+        help="JSON array of external exact-certificate reviewer admissions")
     judge_parser.add_argument("--require-supported", "--require-op", action="append", default=[],
                               metavar="OP", dest="require_supported",
                               help="an op that must be op_qualified supported/complete "

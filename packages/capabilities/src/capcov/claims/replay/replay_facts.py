@@ -107,17 +107,21 @@ simply not this model's.  There is no closure relation -- nothing negates
 well-formedness -- so a missing file is simply no certificate, and the judge
 withholds qualification rather than inferring one.
 
-Which checker versions may be believed is the *reviewer's* word, not the
-checker's: ``model_checkers.json`` (``CHECKERS_FILE``)::
+Which exact checker result may be believed is the *reviewer's* word, not the
+receipt's.  ``export_bundle(..., reviewer_admissions=[...])`` accepts external
+entries of the form::
 
-    {"producer": "reviewer <name>",          # optional; first token must be reviewer
-     "rows": [{"checker": "<name>", "checker_version": "<version>"}, ...]}
+    {"producer": "reviewer <name>",
+     "model": "<sha256>", "checker": "<name>", "checker_version": "<version>",
+     "certificate": "<sha256>"}
 
-exports one ``model_checker_admitted(checker, checker_version)`` row per entry
-(``CHECKERS_RELATION``; the file is named for the list, not for the relation,
-and carries no ``model``).  A certificate from a checker version the list does
-not name admits nothing.  No closure witness here either: the judge reads the
-list positively.
+An entry exports ``model_checker_admitted(checker, checker_version)`` only
+when all four identity fields match one unambiguous ``model_well_formed`` row
+in this receipt.  Its evidence depends on that certificate row, preserving the
+exact reviewed result while leaving the frozen relation schema unchanged.
+The legacy receipt-local ``model_checkers.json`` (``CHECKERS_FILE``) is never
+read as authority; its presence is reported and ignored.  With no external
+admissions the relation remains empty, so qualification remains pending.
 
 THE LEARN RECEIPT.  A *learn campaign* is a separate producer chain -- a tape
 generator, the PHP oracle and the model host -- that replays generated tapes
@@ -295,6 +299,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -370,6 +375,10 @@ UNIQUE_KEYS = {
     "php_response": ("run", "req"),
     "go_response": ("run", "req"),
     "replay_stability": ("run", "run_a", "run_b", "side"),
+    # One checker/version may certify one exact result for a model.  Without
+    # this uniqueness, a two-column admission could accidentally admit a
+    # second certificate carrying the same labels.
+    "model_well_formed": ("model", "checker", "checker_version"),
     # the model's prediction for a tape position is a *set* of admissible post-states
     # (like ``model_admissible``), so the state digest is part of the key; what may not
     # differ is the class the model assigns to one of them.  The oracle answered once.
@@ -397,10 +406,14 @@ WITNESS_PHP_RESPONSES = "php-responses-closed-v1"
 WITNESS_GO_RESPONSES = "go-responses-closed-v1"
 WITNESS_STABILITY = "replay-stability-closed-v1"
 
-# The reviewer's admitted model checkers (module docstring, MODEL WELL-FORMEDNESS):
-# ``model_checker_admitted`` rows under a file name that is not the relation's.
+# The old receipt-local admission file is retained only so its presence can be
+# diagnosed.  It is deliberately never read as reviewer authority.
 CHECKERS_FILE = "model_checkers.json"
 CHECKERS_RELATION = "model_checker_admitted"
+_REVIEWER_ADMISSION_KEYS = frozenset({
+    "producer", "model", "checker", "checker_version", "certificate",
+})
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 # The learn campaign (module docstring, LEARN RECEIPT).  A subdirectory, because the
 # learn files are a *different producer chain* -- a tape generator, the oracle and the
@@ -932,6 +945,72 @@ def _read_rows(receipt_dir: Path, relation: RelationDecl, header: Mapping[str, s
     return producer, rows
 
 
+def _validated_reviewer_admissions(
+    raw_admissions: Iterable[Mapping[str, Any]],
+    header: Mapping[str, str],
+    certificate_eids: Mapping[tuple[str, str, str, str], str],
+) -> list[tuple[str, dict[str, str], str]]:
+    """Validate external reviewer authority and bind it to receipt certificates.
+
+    Returns ``(source, projected relation row, certificate evidence id)``.  The
+    frozen relation intentionally contains only checker/version; requiring an
+    exact match here and depending on the unique certificate evidence keeps
+    the projection from becoming label-only authority.
+    """
+    if isinstance(raw_admissions, (str, bytes, Mapping)):
+        raise ExportInputError("reviewer_admissions must be an iterable of admission objects")
+    try:
+        admissions = list(raw_admissions)
+    except TypeError as exc:
+        raise ExportInputError("reviewer_admissions must be an iterable of admission objects") from exc
+
+    validated: list[tuple[str, dict[str, str], str]] = []
+    projected: set[tuple[str, str]] = set()
+    for index, admission in enumerate(admissions):
+        label = f"reviewer_admissions[{index}]"
+        if not isinstance(admission, Mapping):
+            raise ExportInputError(f"{label}: must be an object")
+        if set(admission) != _REVIEWER_ADMISSION_KEYS:
+            raise ExportInputError(
+                f"{label}: must have exactly {sorted(_REVIEWER_ADMISSION_KEYS)}")
+        values: dict[str, str] = {}
+        for key in sorted(_REVIEWER_ADMISSION_KEYS):
+            value = admission[key]
+            if not isinstance(value, str) or not value.strip():
+                raise ExportInputError(f"{label}.{key}: must be a non-empty string")
+            values[key] = value
+        if values["producer"].split(None, 1)[0] != "reviewer":
+            raise ExportInputError(f"{label}.producer: must use the reviewer producer class")
+        for key in ("model", "certificate"):
+            if not _SHA256_RE.fullmatch(values[key]):
+                raise ExportInputError(f"{label}.{key}: must be a lowercase sha256 digest")
+        if values["model"] != header["model"]:
+            raise ExportInputError(
+                f"{label}: model {values['model'][:12]!r} does not match the receipt model "
+                f"{header['model'][:12]!r}")
+
+        certificate_key = (
+            values["model"], values["checker"], values["checker_version"],
+            values["certificate"],
+        )
+        certificate_eid = certificate_eids.get(certificate_key)
+        if certificate_eid is None:
+            raise ExportInputError(
+                f"{label}: no model_well_formed row matches model, checker, "
+                "checker_version, and certificate")
+        relation_key = (values["checker"], values["checker_version"])
+        if relation_key in projected:
+            raise ExportInputError(
+                f"{label}: duplicate admission for checker {values['checker']!r} "
+                f"version {values['checker_version']!r}")
+        projected.add(relation_key)
+        validated.append((values["producer"], {
+            "checker": values["checker"],
+            "checker_version": values["checker_version"],
+        }, certificate_eid))
+    return validated
+
+
 # ---------------------------------------------------------------------------
 # The exporter
 
@@ -941,6 +1020,7 @@ def export_bundle(
     *,
     run: str,
     describes_indexes: Iterable[str] = (),
+    reviewer_admissions: Iterable[Mapping[str, Any]] = (),
     limits: ExportLimits | None = None,
 ) -> ExportResult:
     """Export one receipt directory as a validated replay-facts ``Bundle``.
@@ -948,7 +1028,10 @@ def export_bundle(
     ``run`` is the run the caller expects the receipt to be for; a receipt for
     another run is ``invalid-input``.  ``describes_indexes`` adds one
     ``index_describes_replay(index, run)`` row per static index digest the
-    caller vouches for.  Returns ``ExportResult`` with status ``complete``
+    caller vouches for. ``reviewer_admissions`` is external reviewer authority:
+    every entry must pin this receipt's model and one exact
+    ``model_well_formed`` checker/version/certificate tuple.  Receipt-local
+    ``model_checkers.json`` is ignored.  Returns ``ExportResult`` with status ``complete``
     (bundle present), ``resource-exhausted`` (a limit tripped; no bundle),
     ``stale`` (a row file names another run; no bundle) or ``invalid-input``
     (a receipt precondition or bundle validation failed; no bundle).  Never
@@ -980,6 +1063,7 @@ def export_bundle(
         # --- observation files ---------------------------------------------------
         producers: dict[str, str] = {"replay_run": default_source(relations["replay_run"])}
         request_eids: dict[str, str] = {}
+        certificate_eids: dict[tuple[str, str, str, str], str] = {}
         for name in OBSERVATION_FILES:
             decl = relations[name]
             producer, rows = _read_rows(receipt_dir, decl, header, limits)
@@ -1005,6 +1089,9 @@ def export_bundle(
                 eid = facts.add(name, row, source=source, depends_on=deps)
                 if name == "replay_request":
                     request_eids[row["req"]] = eid
+                elif name == "model_well_formed":
+                    certificate_eids[(row["model"], row["checker"],
+                                      row["checker_version"], row["certificate"])] = eid
             if len(facts) > limits.rows:
                 return ExportResult(STATUS_RESOURCE_EXHAUSTED, None, facts.counts(),
                                     (f"rows {len(facts)} exceed limit {limits.rows}",))
@@ -1052,15 +1139,19 @@ def export_bundle(
                 return ExportResult(STATUS_RESOURCE_EXHAUSTED, None, facts.counts(),
                                     (f"rows {len(facts)} exceed limit {limits.rows}",))
 
-        # --- the reviewer's admitted model checkers ---------------------------------
+        # --- externally supplied reviewer admissions --------------------------------
         checkers = relations[CHECKERS_RELATION]
-        producer, rows = _read_rows(receipt_dir, checkers, header, limits, CHECKERS_FILE)
-        source = producer if producer is not None else default_source(checkers)
-        producers[CHECKERS_RELATION] = source
-        if producer is None and not rows:
-            messages.append(f"{CHECKERS_FILE} absent: zero admitted checkers")
-        for row in rows:
-            facts.add(CHECKERS_RELATION, row, source=source)
+        admissions = _validated_reviewer_admissions(
+            reviewer_admissions, header, certificate_eids)
+        if (receipt_dir / CHECKERS_FILE).is_file():
+            messages.append(
+                f"{CHECKERS_FILE} ignored: reviewer admissions must be supplied by the caller")
+        if not admissions:
+            messages.append("no caller-supplied reviewer admissions: zero admitted checkers")
+        for source, row, certificate_eid in admissions:
+            producers[CHECKERS_RELATION] = source
+            facts.add(CHECKERS_RELATION, row, source=source,
+                      depends_on=[certificate_eid])
 
         # --- reviewer scope exclusions (assumption-kind evidence) --------------------
         source, rows = _read_exclusions(receipt_dir, header, limits)
