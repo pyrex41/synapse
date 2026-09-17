@@ -109,8 +109,8 @@ class CompiledCheckerScriptTests(unittest.TestCase):
         self.assertEqual(document["required_ops"], ["delete-issue"])
         self.assertEqual(document["contract_findings"], [])
         self.assertEqual(document["pack"]["id"], "rules-replay-v1")
-        self.assertEqual(document["pack"]["relation_count"], 115)
-        self.assertEqual(document["pack"]["rule_count"], 71)
+        self.assertEqual(document["pack"]["relation_count"], 116)
+        self.assertEqual(document["pack"]["rule_count"], 72)
         self.assertRegex(document["pack"]["program_digest"], HEX64)
 
         kernels = document["kernels"]
@@ -154,7 +154,16 @@ class CompiledCheckerScriptTests(unittest.TestCase):
         self.assertTrue((out / "receipt.json").is_file())
         certificates = sorted(p.name for p in out.glob("certificate-*.json"))
         self.assertIn("certificate-claim-corpus-constrains-delete-issue.json", certificates)
+        self.assertIn("certificate-claim-mutation-scope-delete-issue.json", certificates)
         self.assertNotIn("certificate-claim-qualified-delete-issue.json", certificates)
+        seed = json.loads((out / "certificate-claim-mutation-scope-delete-issue.json").read_text())
+        self.assertEqual(seed["conclusion"], {
+            "relation": "mutation_scope_seed",
+            "row": [document["receipt"]["model"], document["receipt"]["run"], "delete-issue"],
+        })
+        self.assertEqual({item["relation"] for item in seed["witnesses"]},
+                         {"model_describes_run", "replay_requests_closed", "go_effects_closed"})
+        self.assertFalse(seed["truncated"])
 
     def test_the_synthetic_receipt_is_supported_and_exits_zero(self) -> None:
         """The positive exit-0 path, on the corpus fixture whose every fact is made up.
@@ -334,7 +343,7 @@ class CompiledCheckerScriptTests(unittest.TestCase):
         self.assertEqual(document["schema"], "capcov-compiled-bench-v1")
         self.assertEqual(document["fixture"], replay_join.COMMITTED_RECEIPT_DIR.name)
         self.assertEqual(document["scale"], 2)
-        self.assertEqual(document["relation_count"], 115)
+        self.assertEqual(document["relation_count"], 116)
         self.assertTrue(document["closures_identical"])
         self.assertRegex(document["binary_sha256"], HEX64)
         self.assertRegex(document["souffle"]["sha256"], HEX64)

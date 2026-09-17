@@ -28,6 +28,7 @@ EXPECTED_KEYS = (*LEAF_KEYS, "semantic_verdict", "operational_status", "discrepa
 STUBS = {"mutant_killed_in", "op_qualified_rt"}
 DERIVED = {
     "replay_run_current", "replay_run_stale", "requested", "requested_closed", "replayed",
+    "mutation_scope_seed",
     "php_model_agree", "php_model_disagree", "go_model_agree", "go_model_disagree", "op_exercised",
     "php_observed", "go_observed", "php_observed_closed", "go_observed_closed", "post_state_gap",
     "post_state_any", "post_state_gap_closed", "kill_closure_gap_any", "kill_gap_closed",
@@ -120,6 +121,8 @@ class ReplayRulePackTests(unittest.TestCase):
                 self.assertEqual(item["producer_classes"], [])
                 if name in {"op_qualified", "op_qualified_rt"}:
                     self.assertEqual(item["context_indices"], ["index", "run"])
+                elif name == "mutation_scope_seed":
+                    self.assertEqual(item["context_indices"], ["model", "run"])
                 elif name in {"model_scope_excluded", "model_scope_excluded_closed"}:
                     self.assertEqual(item["context_indices"], ["model"])
                 else:
@@ -188,6 +191,19 @@ class ReplayRulePackTests(unittest.TestCase):
             ("repeat_delete_has_effect", "model_scope_excluded"), ("oracle_stable", "oracle_unstable")})
         witnesses = {item["completes"] for item in self.declarations.values() if item["modality"] == "completeness"}
         self.assertTrue({target for _, target in negated} <= witnesses)
+
+    def test_mutation_scope_seed_is_non_circular_and_closed(self) -> None:
+        declaration = self.declarations["mutation_scope_seed"]
+        self.assertEqual([column["name"] for column in declaration["columns"]],
+                         ["model", "run", "op"])
+        self.assertEqual(declaration["context_indices"], ["model", "run"])
+        rule = next(rule for rule in self.pack["rules"] if rule["name"] == "mutation_scope_seed")
+        self.assertEqual([atom["relation"] for atom in _atoms(rule)], [
+            "model_describes_run", "replayed", "replay_requests_closed", "go_effects_closed",
+        ])
+        self.assertFalse(any(atom.get("negated") for atom in _atoms(rule)))
+        self.assertFalse({"mutant", "mutants_closed", "model_well_formed", "op_qualified"}
+                         & {atom["relation"] for atom in _atoms(rule)})
 
     def test_the_learn_campaign_downgrades_and_never_grants(self) -> None:
         """The learn gate is a downgrade, and absence of a campaign is not a premise.

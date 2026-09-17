@@ -119,9 +119,9 @@ class ProgramIdentityTests(unittest.TestCase):
         join = replay_join.build(replay_join.COMMITTED_RECEIPT_DIR)
         self.assertIsNotNone(join.bundle, join.contract_findings)
         program = souffle.program_for_pack(join.bundle)
-        self.assertEqual(program.program_digest, "9addbe3961470778edbc44dfb539f207d2de8da7fae9a7fbc76c8c35fc585974")
-        self.assertEqual(len(program.outputs), 115)
-        self.assertEqual(len(program.program.splitlines()), 354)
+        self.assertEqual(program.program_digest, "b30ae0807ceec02f17074bdb644c78257b3f9d87954e5d4949e77a9280f3a825")
+        self.assertEqual(len(program.outputs), 116)
+        self.assertEqual(len(program.program.splitlines()), 357)
         unqualified = replay_join.build(replay_join.UNQUALIFIED_RECEIPT_DIR)
         self.assertEqual(souffle.program_for_pack(unqualified.bundle).program_digest, program.program_digest)
         # the exported schema declares the pack's primitives in the same order the pack does, so

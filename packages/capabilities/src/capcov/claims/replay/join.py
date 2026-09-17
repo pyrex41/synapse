@@ -3,9 +3,10 @@
 ``build`` exports the receipt directory (``replay_facts.export_bundle``; a
 refusal is a *contract finding* the caller reports, never something to work
 around), combines it with ``rules-replay-v1`` (``capcov.claims.replay.pack``)
-and the claim-time rows a judge adds, and states four claims per replayed op:
-``op_qualified(index, run, op)``, ``corpus_constrains(run, op)`` and the
-companion ``undeclared_write`` / ``exclusion_applied`` rows.  Until a PHP SCIP
+and the claim-time rows a judge adds, and states five claims per replayed op:
+``op_qualified(index, run, op)``, ``corpus_constrains(run, op)``, the
+non-circular ``mutation_scope_seed(model, run, op)``, and the companion
+``undeclared_write`` / ``exclusion_applied`` rows.  Until a PHP SCIP
 census exists, the ``op_declared`` rows and the ``index_describes_replay``
 witness are labelled *assumptions* (``Evidence.kind == "assumption"``, ids
 ``<prefix>:assumed:...``) under a synthetic index digest; their sources name
@@ -364,11 +365,16 @@ def build(directory: Path, *, reviewer_admissions=()) -> ReplayJoin:
                           Context.from_mapping({"index": SYNTHETIC_INDEX, "run": run}), id=join.claim_id("qualified", op))
         constrains = Claim("corpus_constrains", (Constant(run, "symbol"), Constant(op, "symbol")),
                            Context.from_mapping({"run": run}), id=join.claim_id("corpus-constrains", op))
+        mutation_scope = Claim(
+            "mutation_scope_seed",
+            (Constant(receipt["model"], "digest"), Constant(run, "symbol"), Constant(op, "symbol")),
+            Context.from_mapping({"model": receipt["model"], "run": run}),
+            id=join.claim_id("mutation-scope", op))
         undeclared = Claim("undeclared_write", (Constant(run, "symbol"), Constant(op, "symbol"), Variable("table")),
                            Context.from_mapping({"run": run}), id=join.claim_id("undeclared-write", op))
         applied = Claim("exclusion_applied", (Constant(run, "symbol"), Constant(op, "symbol"), Variable("table")),
                         Context.from_mapping({"run": run}), id=join.claim_id("exclusions-applied", op))
-        claims.extend([qualified, constrains, undeclared, applied])
+        claims.extend([qualified, constrains, mutation_scope, undeclared, applied])
         if learn_rows["learn_run"]:
             # only when a campaign is bound to this run: a claim about an absent
             # campaign would be unresolved for want of the campaign, not for want

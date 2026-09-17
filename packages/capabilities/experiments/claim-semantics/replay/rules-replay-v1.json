@@ -202,6 +202,40 @@
       "columns": [
         {
           "context": true,
+          "name": "model",
+          "type": "digest"
+        },
+        {
+          "context": true,
+          "name": "run",
+          "type": "symbol"
+        },
+        {
+          "context": false,
+          "name": "op",
+          "type": "symbol"
+        }
+      ],
+      "compatibility_context_indices": [],
+      "compatibility_targets": [],
+      "completes": null,
+      "context_indices": [
+        "model",
+        "run"
+      ],
+      "finite": false,
+      "modality": "derived",
+      "name": "mutation_scope_seed",
+      "nonempty": false,
+      "polarity": "positive",
+      "primitive": false,
+      "producer_classes": []
+    },
+    {
+      "binding": "runtime",
+      "columns": [
+        {
+          "context": true,
           "name": "run",
           "type": "symbol"
         },
@@ -3959,6 +3993,63 @@
         ]
       },
       "name": "replayed"
+    },
+    {
+      "body": [
+        {
+          "relation": "model_describes_run",
+          "terms": [
+            {
+              "variable": "M"
+            },
+            {
+              "variable": "Run"
+            }
+          ]
+        },
+        {
+          "relation": "replayed",
+          "terms": [
+            {
+              "variable": "Run"
+            },
+            {
+              "variable": "Op"
+            }
+          ]
+        },
+        {
+          "relation": "replay_requests_closed",
+          "terms": [
+            {
+              "variable": "Run"
+            }
+          ]
+        },
+        {
+          "relation": "go_effects_closed",
+          "terms": [
+            {
+              "variable": "Run"
+            }
+          ]
+        }
+      ],
+      "head": {
+        "relation": "mutation_scope_seed",
+        "terms": [
+          {
+            "variable": "M"
+          },
+          {
+            "variable": "Run"
+          },
+          {
+            "variable": "Op"
+          }
+        ]
+      },
+      "name": "mutation_scope_seed"
     },
     {
       "body": [
