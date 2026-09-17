@@ -121,9 +121,23 @@ def _judge_identity(judge: Mapping[str, Any]) -> dict[str, Any]:
     pending = []
     for op in judged:
         entry = ops.get(op)
-        if not isinstance(entry, Mapping) or entry.get("verdict") != "supported":
+        qualified = (isinstance(entry, Mapping)
+                     and entry.get("verdict") == "supported"
+                     and entry.get("qualification") == "qualified"
+                     and isinstance(entry.get("op_qualified"), Mapping)
+                     and entry["op_qualified"].get("semantic") == "supported"
+                     and entry["op_qualified"].get("operational") == "complete")
+        if not qualified:
             unmet.append(op)
-            if isinstance(entry, Mapping) and str(entry.get("qualification", "")).startswith("pending "):
+            op_qualified = entry.get("op_qualified") if isinstance(entry, Mapping) else None
+            if (isinstance(entry, Mapping)
+                    and entry.get("verdict") == "not-supported"
+                    and str(entry.get("qualification", "")).startswith("pending ")
+                    and isinstance(op_qualified, Mapping)
+                    and op_qualified.get("semantic") == "unresolved"
+                    and op_qualified.get("operational") == "complete"
+                    and isinstance(op_qualified.get("missing_premises"), list)
+                    and op_qualified["missing_premises"]):
                 pending.append(op)
     derived_exit = 0 if judged and not unmet else (5 if unmet and pending == unmet else 1)
     if exit_code != derived_exit:
@@ -155,9 +169,14 @@ def bind(advisory: Mapping[str, Any], judge: Mapping[str, Any]) -> dict[str, Any
     if advisory.get("schema_version") != 1:
         raise jev.JevError("invalid-input", "advisory.schema_version must be 1")
     allowed = ADVISORY_KEYS if advisory.get("kind") == jev.ARTIFACT_KIND else PATTERN_KEYS
-    extra = set(advisory) - allowed
-    if extra:
-        raise jev.JevError("invalid-input", "advisory has unknown fields: " + ", ".join(sorted(extra)))
+    if set(advisory) != allowed:
+        missing, extra = allowed - set(advisory), set(advisory) - allowed
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(sorted(missing)))
+        if extra:
+            detail.append("unknown " + ", ".join(sorted(extra)))
+        raise jev.JevError("invalid-input", "advisory fields are invalid: " + "; ".join(detail))
     if advisory.get("kind") == jev.ARTIFACT_KIND:
         jev.claims_bundle(advisory)
     else:

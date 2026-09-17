@@ -110,11 +110,16 @@ class JevAdvisoryTests(unittest.TestCase):
         souffle = "1" * 64
         compiler = "2" * 64
         flags = ["--no-preprocessor", "-j1", "-o"]
-        operation = ({"verdict": "supported", "qualification": "qualified"}
+        operation = ({"verdict": "supported", "qualification": "qualified",
+                      "op_qualified": {"semantic": "supported", "operational": "complete",
+                                       "missing_premises": []}}
                      if exit_code == 0 else
                      {"verdict": "not-supported",
                       "qualification": ("pending model_well_formed"
-                                        if exit_code == 5 else "unsupported")})
+                                        if exit_code == 5 else "unsupported"),
+                      "op_qualified": {"semantic": "unresolved", "operational": "complete",
+                                       "missing_premises": (["model_well_formed"]
+                                                            if exit_code == 5 else ["model_writes"])}})
         return {
             "schema": "capcov-compiled-judge-v1",
             "receipt": {"run": "run-17", "model": "b" * 64,
@@ -136,6 +141,9 @@ class JevAdvisoryTests(unittest.TestCase):
                         "closure_digest": "e" * 64, "failures": {}},
             "ops": {"delete-issue": {**operation, "certificate_sha256": None},
                     "corpus": {"verdict": "supported", "qualification": "qualified",
+                               "op_qualified": {"semantic": "supported",
+                                                "operational": "complete",
+                                                "missing_premises": []},
                                "certificate_sha256": "f" * 64}},
             "required_ops": ["delete-issue"],
             "contract_findings": [],
@@ -199,6 +207,11 @@ class JevAdvisoryTests(unittest.TestCase):
         with self.assertRaisesRegex(JevError, "required operation"):
             jev_binding.bind(advisory, wrong_result)
 
+        fake_supported = self._judge(0)
+        fake_supported["ops"]["delete-issue"]["qualification"] = "unsupported"
+        with self.assertRaisesRegex(JevError, "required operation"):
+            jev_binding.bind(advisory, fake_supported)
+
         duplicate = deepcopy(judge)
         duplicate["required_ops"] = ["delete-issue", "delete-issue"]
         with self.assertRaisesRegex(JevError, "duplicates"):
@@ -220,8 +233,16 @@ class JevAdvisoryTests(unittest.TestCase):
         core.pop("assessment_id")
         from capcov.claims import jev as jev_module
         extended["assessment_id"] = f"jev:{jev_module._digest(core)}"
-        with self.assertRaisesRegex(JevError, "unknown fields"):
+        with self.assertRaisesRegex(JevError, "unknown"):
             jev_binding.bind(extended, judge)
+
+        missing = deepcopy(advisory)
+        missing.pop("usage")
+        core = dict(missing)
+        core.pop("assessment_id")
+        missing["assessment_id"] = f"jev:{jev_module._digest(core)}"
+        with self.assertRaisesRegex(JevError, "missing usage"):
+            jev_binding.bind(missing, judge)
 
     def test_binding_cli_does_not_disclose_missing_input_paths(self) -> None:
         output = StringIO()
@@ -231,6 +252,21 @@ class JevAdvisoryTests(unittest.TestCase):
                 "claims", "jev", "bind", "--advisory", private_path,
                 "--judge", "/missing/judge.json", "--out", "/tmp/out.json"]), 3)
         self.assertNotIn(private_path, output.getvalue())
+
+    def test_binding_cli_does_not_disclose_unwritable_output_path(self) -> None:
+        advisory = build_artifact(AssessmentRequest.parse(request_document()), api_response())
+        with tempfile.TemporaryDirectory() as tmp:
+            advisory_path = Path(tmp) / "advisory.json"
+            judge_path = Path(tmp) / "judge.json"
+            advisory_path.write_text(json.dumps(advisory), encoding="utf-8")
+            judge_path.write_text(json.dumps(self._judge()), encoding="utf-8")
+            private_path = "/private/operator/name/out/binding.json"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(experiment_main([
+                    "claims", "jev", "bind", "--advisory", str(advisory_path),
+                    "--judge", str(judge_path), "--out", private_path]), 3)
+            self.assertNotIn(private_path, output.getvalue())
 
     def test_binding_cli_writes_content_addressed_artifact(self) -> None:
         advisory = build_artifact(AssessmentRequest.parse(request_document()), api_response())
