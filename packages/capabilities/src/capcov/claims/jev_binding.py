@@ -17,8 +17,9 @@ ARTIFACT_KIND = "capcov-jev-judge-binding-v1"
 ALLOWED_EXIT_CODES = {0, 1, 5}
 ADVISORY_KEYS = frozenset({
     "schema_version", "kind", "producer", "subject_id", "model",
-    "requested_model", "state_sha256", "request_sha256",
+    "requested_model", "request", "state_sha256", "request_sha256",
     "candidate_set_sha256", "candidates", "judgments", "usage",
+    "response_provenance", "response", "raw_response_utf8",
     "evidence_semantics", "assessment_id",
 })
 PATTERN_KEYS = frozenset({
@@ -126,7 +127,8 @@ def _judge_identity(judge: Mapping[str, Any]) -> dict[str, Any]:
                      and entry.get("qualification") == "qualified"
                      and isinstance(entry.get("op_qualified"), Mapping)
                      and entry["op_qualified"].get("semantic") == "supported"
-                     and entry["op_qualified"].get("operational") == "complete")
+                     and entry["op_qualified"].get("operational") == "complete"
+                     and entry["op_qualified"].get("missing_premises") == [])
         if not qualified:
             unmet.append(op)
             op_qualified = entry.get("op_qualified") if isinstance(entry, Mapping) else None
@@ -192,6 +194,10 @@ def bind(advisory: Mapping[str, Any], judge: Mapping[str, Any]) -> dict[str, Any
             "kind": advisory["kind"],
             "assessment_id": advisory["assessment_id"],
             "sha256": jev._digest(jev._plain_json(advisory, "advisory")),
+            "response_raw_sha256": advisory.get("response_provenance", {}).get("raw_sha256"),
+            "response_canonical_sha256": advisory.get("response_provenance", {}).get("canonical_sha256"),
+            "response_mode": advisory.get("response_provenance", {}).get("mode"),
+            "service_attested": advisory.get("response_provenance", {}).get("service_attested"),
         },
         "judge": {**identity, "sha256": jev._digest(jev._plain_json(judge, "judge"))},
         "authority": {

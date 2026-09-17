@@ -95,6 +95,13 @@ def _strict_keys(value: Mapping[str, Any], allowed: set[str], path: str) -> None
         raise JevError("invalid-input", f"{path} has unknown fields: {', '.join(sorted(extra))}")
 
 
+def _exact_keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:
+    _strict_keys(value, expected, path)
+    missing = expected - set(value)
+    if missing:
+        raise JevError("invalid-input", f"{path} is missing fields: {', '.join(sorted(missing))}")
+
+
 @dataclass(frozen=True)
 class Candidate:
     id: str
@@ -215,17 +222,24 @@ def _probability(value: Any, path: str) -> float:
     return result
 
 
-def build_artifact(request: AssessmentRequest, response: Any) -> dict[str, Any]:
+def build_artifact(request: AssessmentRequest, response: Any, *,
+                   raw_response: bytes | None = None,
+                   response_mode: str = "in-memory-unattested") -> dict[str, Any]:
     if not isinstance(response, Mapping):
         raise JevError("invalid-response", "TypeSafe response must be an object")
+    _exact_keys(response, {"model", "answers", "usage"}, "response")
     answers = response.get("answers")
     if not isinstance(answers, Mapping):
         raise JevError("invalid-response", "TypeSafe response.answers must be an object")
+    _exact_keys(answers, {SELECTION_QUESTION, PRESENCE_QUESTION}, "response.answers")
     selection, presence = answers.get(SELECTION_QUESTION), answers.get(PRESENCE_QUESTION)
     if not isinstance(selection, Mapping) or selection.get("type") != "choice":
         raise JevError("invalid-response", f"answers.{SELECTION_QUESTION} must be a Choice")
     if not isinstance(presence, Mapping) or presence.get("type") != "noul":
         raise JevError("invalid-response", f"answers.{PRESENCE_QUESTION} must be a Noul")
+    _exact_keys(selection, {"type", "choice", "probabilities", "confidence"},
+                 f"response.answers.{SELECTION_QUESTION}")
+    _exact_keys(presence, {"type", "noul"}, f"response.answers.{PRESENCE_QUESTION}")
     candidate_ids = {candidate.id for candidate in request.candidates} | {NO_MATCH}
     choice = selection.get("choice")
     if choice not in candidate_ids:
@@ -248,6 +262,7 @@ def build_artifact(request: AssessmentRequest, response: Any) -> dict[str, Any]:
     usage = response.get("usage", {})
     if not isinstance(usage, Mapping):
         raise JevError("invalid-response", "response.usage must be an object")
+    _exact_keys(usage, {"input_tokens", "output_tokens"}, "response.usage")
     parsed_usage: dict[str, int] = {}
     for key in ("input_tokens", "output_tokens"):
         value = usage.get(key, 0)
@@ -257,6 +272,15 @@ def build_artifact(request: AssessmentRequest, response: Any) -> dict[str, Any]:
 
     payload = request.payload()
     candidate_document = [candidate.as_state() for candidate in request.candidates]
+    raw_text = None
+    raw_digest = None
+    if raw_response is not None:
+        try:
+            raw_text = raw_response.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise JevError("invalid-response", "raw response is not UTF-8 JSON") from exc
+        raw_digest = hashlib.sha256(raw_response).hexdigest()
+    response_document = _plain_json(response, "response")
     core = {
         "schema_version": SCHEMA_VERSION,
         "kind": ARTIFACT_KIND,
@@ -264,9 +288,18 @@ def build_artifact(request: AssessmentRequest, response: Any) -> dict[str, Any]:
         "subject_id": request.subject_id,
         "model": response_model,
         "requested_model": request.model,
+        "request": payload,
         "state_sha256": _digest(payload["state"]),
         "request_sha256": _digest(payload),
         "candidate_set_sha256": _digest(candidate_document),
+        "response_provenance": {
+            "mode": response_mode,
+            "raw_sha256": raw_digest,
+            "canonical_sha256": _digest(response_document),
+            "service_attested": False,
+        },
+        "response": response_document,
+        "raw_response_utf8": raw_text,
         "candidates": candidate_document,
         "judgments": {
             SELECTION_QUESTION: {
@@ -305,33 +338,164 @@ def claims_bundle(artifact: Mapping[str, Any]):
 
     if not isinstance(artifact, Mapping) or artifact.get("kind") != ARTIFACT_KIND:
         raise JevError("invalid-input", f"artifact.kind must be {ARTIFACT_KIND!r}")
+    expected_artifact_keys = {
+        "schema_version", "kind", "producer", "subject_id", "model", "requested_model",
+        "request", "state_sha256", "request_sha256", "candidate_set_sha256",
+        "response_provenance", "response", "raw_response_utf8",
+        "candidates", "judgments", "usage",
+        "evidence_semantics", "assessment_id",
+    }
+    if set(artifact) != expected_artifact_keys:
+        raise JevError("invalid-input", "artifact fields are not the exact advisory schema")
     _require_content_address(artifact, prefix="jev:")
     assessment_id = artifact.get("assessment_id")
     subject_id = artifact.get("subject_id")
     producer = artifact.get("producer")
     judgments = artifact.get("judgments")
     semantics = artifact.get("evidence_semantics")
+    request = artifact.get("request")
+    response = artifact.get("response")
+    raw_response = artifact.get("raw_response_utf8")
+    provenance = artifact.get("response_provenance")
+    candidates = artifact.get("candidates")
+    usage = artifact.get("usage")
     if (not isinstance(assessment_id, str) or not assessment_id
             or not isinstance(subject_id, str) or not subject_id
-            or not isinstance(producer, Mapping) or producer.get("class") != "jev"
+            or not isinstance(producer, Mapping) or set(producer) != {"class", "source"}
+            or producer.get("class") != "jev"
             or not isinstance(producer.get("source"), str)
             or not producer["source"].startswith("jev ")
             or not isinstance(judgments, Mapping)
+            or set(judgments) != {SELECTION_QUESTION, PRESENCE_QUESTION}
             or not isinstance(semantics, Mapping)
+            or set(semantics) != {"kind", "may_rank_or_request_probe", "may_establish_fact",
+                                  "may_establish_compatibility", "may_establish_completeness",
+                                  "may_qualify_claim"}
             or semantics.get("kind") != "assumption"
             or any(semantics.get(name) is not False for name in (
                 "may_establish_fact", "may_establish_compatibility",
                 "may_establish_completeness", "may_qualify_claim",
             ))):
         raise JevError("invalid-input", "artifact does not satisfy the Jev advisory contract")
+    if (not isinstance(request, Mapping)
+            or set(request) != {"state", "model", "questions"}
+            or artifact.get("request_sha256") != _digest(request)
+            or artifact.get("state_sha256") != _digest(request.get("state"))
+            or not isinstance(candidates, list)
+            or artifact.get("candidate_set_sha256") != _digest(candidates)):
+        raise JevError("invalid-input", "artifact request or state digests do not match their content")
+    state = request.get("state")
+    questions = request.get("questions")
+    if (not isinstance(state, Mapping)
+            or set(state) != {"subject_id", "subject", "candidates"}
+            or state.get("candidates") != candidates
+            or not isinstance(questions, Mapping)
+            or set(questions) != {SELECTION_QUESTION, PRESENCE_QUESTION}):
+        raise JevError("invalid-input", "artifact candidates differ from the bound request")
+    selection_question = questions.get(SELECTION_QUESTION)
+    presence_question = questions.get(PRESENCE_QUESTION)
+    if (not isinstance(selection_question, Mapping)
+            or set(selection_question) != {"type", "instructions", "criteria"}
+            or not isinstance(presence_question, Mapping)
+            or set(presence_question) != {"type", "instructions", "criteria"}):
+        raise JevError("invalid-input", "artifact request question schemas are malformed")
+    if (not isinstance(provenance, Mapping)
+            or set(provenance) != {"mode", "raw_sha256", "canonical_sha256", "service_attested"}
+            or provenance.get("mode") not in {"in-memory-unattested", "offline-file-unattested",
+                                               "https-unattested"}
+            or provenance.get("service_attested") is not False
+            or not isinstance(provenance.get("canonical_sha256"), str)
+            or (provenance.get("raw_sha256") is not None
+                and not isinstance(provenance.get("raw_sha256"), str))):
+        raise JevError("invalid-input", "artifact response provenance is malformed")
+    if not isinstance(response, Mapping) or provenance["canonical_sha256"] != _digest(response):
+        raise JevError("invalid-input", "artifact canonical response digest does not match")
+    if set(response) != {"model", "answers", "usage"}:
+        raise JevError("invalid-input", "artifact response fields are not exact")
+    response_answers = response.get("answers")
+    response_usage = response.get("usage")
+    if (not isinstance(response.get("model"), str) or not response["model"]
+            or not isinstance(response_answers, Mapping)
+            or set(response_answers) != {SELECTION_QUESTION, PRESENCE_QUESTION}
+            or not isinstance(response_usage, Mapping)
+            or set(response_usage) != {"input_tokens", "output_tokens"}):
+        raise JevError("invalid-input", "artifact response schema is malformed")
+    response_selection = response_answers.get(SELECTION_QUESTION)
+    response_presence = response_answers.get(PRESENCE_QUESTION)
+    if (not isinstance(response_selection, Mapping)
+            or set(response_selection) != {"type", "choice", "probabilities", "confidence"}
+            or not isinstance(response_presence, Mapping)
+            or set(response_presence) != {"type", "noul"}):
+        raise JevError("invalid-input", "artifact response answers are malformed")
+    candidate_ids = {
+        candidate.get("id") for candidate in candidates if isinstance(candidate, Mapping)
+    } | {NO_MATCH}
+    response_probabilities = response_selection.get("probabilities")
+    if (response_selection.get("type") != "choice"
+            or response_selection.get("choice") not in candidate_ids
+            or not isinstance(response_probabilities, Mapping)
+            or set(response_probabilities) != candidate_ids
+            or response_presence.get("type") != "noul"):
+        raise JevError("invalid-input", "artifact response answer values are malformed")
+    try:
+        normalized_probabilities = {
+            key: _probability(value, f"response.probabilities.{key}")
+            for key, value in response_probabilities.items()
+        }
+        normalized_confidence = _probability(
+            response_selection.get("confidence"), "response.choice.confidence")
+        normalized_noul = _probability(
+            response_presence.get("noul"), "response.presence.noul")
+    except JevError as exc:
+        raise JevError("invalid-input", "artifact response probabilities are malformed") from exc
+    if abs(sum(normalized_probabilities.values()) - 1.0) > 0.02:
+        raise JevError("invalid-input", "artifact response probabilities do not sum to 1")
+    if any(type(response_usage[name]) is not int or response_usage[name] < 0
+           for name in response_usage):
+        raise JevError("invalid-input", "artifact response usage is malformed")
+    if (artifact.get("model") != response.get("model")
+            or judgments.get(SELECTION_QUESTION) != {
+                "type": "choice",
+                "choice": response_selection.get("choice"),
+                "probabilities": dict(sorted(normalized_probabilities.items())),
+                "confidence": normalized_confidence,
+            }
+            or judgments.get(PRESENCE_QUESTION) != {
+                "type": "noul", "noul": normalized_noul,
+            }
+            or usage != response_usage):
+        raise JevError("invalid-input", "artifact response disagrees with derived advisory fields")
+    if raw_response is None:
+        if provenance["raw_sha256"] is not None:
+            raise JevError("invalid-input", "artifact raw response digest has no retained response")
+    elif (not isinstance(raw_response, str)
+          or provenance["raw_sha256"] != hashlib.sha256(raw_response.encode("utf-8")).hexdigest()):
+        raise JevError("invalid-input", "artifact raw response digest does not match")
+    try:
+        if raw_response is not None and json.loads(raw_response) != response:
+            raise JevError("invalid-input", "artifact raw and parsed responses differ")
+    except json.JSONDecodeError as exc:
+        raise JevError("invalid-input", "artifact raw response is not JSON") from exc
+    if (not isinstance(usage, Mapping) or set(usage) != {"input_tokens", "output_tokens"}
+            or any(type(usage[name]) is not int or usage[name] < 0 for name in usage)):
+        raise JevError("invalid-input", "artifact usage is malformed")
     selection = judgments.get(SELECTION_QUESTION)
     presence = judgments.get(PRESENCE_QUESTION)
-    if (not isinstance(selection, Mapping) or not isinstance(presence, Mapping)
+    if (not isinstance(selection, Mapping) or set(selection) != {"type", "choice", "probabilities", "confidence"}
+            or not isinstance(presence, Mapping) or set(presence) != {"type", "noul"}
             or selection.get("type") != "choice" or presence.get("type") != "noul"):
         raise JevError("invalid-input", "artifact judgments are malformed")
     probabilities = selection.get("probabilities")
     if not isinstance(probabilities, Mapping):
         raise JevError("invalid-input", "artifact probabilities are malformed")
+    for index, candidate in enumerate(candidates):
+        if (not isinstance(candidate, Mapping)
+                or set(candidate) != {"id", "description", "evidence_ids"}
+                or not isinstance(candidate.get("id"), str) or not candidate["id"]
+                or not isinstance(candidate.get("description"), str) or not candidate["description"]
+                or not isinstance(candidate.get("evidence_ids"), list)
+                or any(not isinstance(item, str) or not item for item in candidate["evidence_ids"])):
+            raise JevError("invalid-input", f"artifact candidates[{index}] is malformed")
 
     probability_relation = RelationDecl(
         "jev_candidate_probability",
@@ -431,4 +595,7 @@ def assess(request: AssessmentRequest, *, api_key: str | None = None,
         response = json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise JevError("invalid-response", "TypeSafe response is not JSON") from exc
-    return build_artifact(request, response)
+    return build_artifact(
+        request, response,
+        raw_response=body,
+        response_mode="https-unattested")

@@ -305,7 +305,6 @@ def main(argv: list[str]) -> int:
                         request, max_spread=args.max_spread,
                         endpoint=args.endpoint, timeout=args.timeout)
                 if args.claims_out:
-                    from pathlib import Path
                     from .ir import canonical_json
                     Path(args.claims_out).write_text(
                         canonical_json(jev_patterns.claims_bundle(artifact)) + "\n",
@@ -314,12 +313,19 @@ def main(argv: list[str]) -> int:
                 return 0
             request = jev.AssessmentRequest.parse(_load_json(args.request))
             if args.response:
-                artifact = jev.build_artifact(request, _load_json(args.response))
+                response_bytes = Path(args.response).read_bytes()
+                try:
+                    response_document = json.loads(response_bytes)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise jev.JevError("invalid-response", "offline response is not JSON") from exc
+                artifact = jev.build_artifact(
+                    request, response_document,
+                    raw_response=response_bytes,
+                    response_mode="offline-file-unattested")
             else:
                 artifact = jev.assess(
                     request, endpoint=args.endpoint, timeout=args.timeout)
             if args.claims_out:
-                from pathlib import Path
                 from .ir import canonical_json
 
                 Path(args.claims_out).write_text(

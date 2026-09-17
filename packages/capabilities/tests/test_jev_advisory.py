@@ -212,6 +212,11 @@ class JevAdvisoryTests(unittest.TestCase):
         with self.assertRaisesRegex(JevError, "required operation"):
             jev_binding.bind(advisory, fake_supported)
 
+        supported_with_gap = self._judge(0)
+        supported_with_gap["ops"]["delete-issue"]["op_qualified"]["missing_premises"] = ["model_writes"]
+        with self.assertRaisesRegex(JevError, "required operation"):
+            jev_binding.bind(advisory, supported_with_gap)
+
         duplicate = deepcopy(judge)
         duplicate["required_ops"] = ["delete-issue", "delete-issue"]
         with self.assertRaisesRegex(JevError, "duplicates"):
@@ -243,6 +248,74 @@ class JevAdvisoryTests(unittest.TestCase):
         missing["assessment_id"] = f"jev:{jev_module._digest(core)}"
         with self.assertRaisesRegex(JevError, "missing usage"):
             jev_binding.bind(missing, judge)
+
+        def readdress(document):
+            document = deepcopy(document)
+            document.pop("assessment_id", None)
+            document["assessment_id"] = f"jev:{jev_module._digest(document)}"
+            return document
+
+        nested_extra = deepcopy(advisory)
+        nested_extra["producer"]["authority"] = "invented"
+        with self.assertRaisesRegex(JevError, "advisory contract"):
+            jev_binding.bind(readdress(nested_extra), judge)
+
+        wrong_request_digest = deepcopy(advisory)
+        wrong_request_digest["request_sha256"] = "0" * 64
+        with self.assertRaisesRegex(JevError, "digests"):
+            jev_binding.bind(readdress(wrong_request_digest), judge)
+
+        wrong_state_digest = deepcopy(advisory)
+        wrong_state_digest["state_sha256"] = "0" * 64
+        with self.assertRaisesRegex(JevError, "digests"):
+            jev_binding.bind(readdress(wrong_state_digest), judge)
+
+        wrong_candidates_digest = deepcopy(advisory)
+        wrong_candidates_digest["candidate_set_sha256"] = "0" * 64
+        with self.assertRaisesRegex(JevError, "digests"):
+            jev_binding.bind(readdress(wrong_candidates_digest), judge)
+
+        request_extra = deepcopy(advisory)
+        request_extra["request"]["private_note"] = "not admitted"
+        request_extra["request_sha256"] = jev_module._digest(request_extra["request"])
+        with self.assertRaisesRegex(JevError, "digests|schema"):
+            jev_binding.bind(readdress(request_extra), judge)
+
+        state_extra = deepcopy(advisory)
+        state_extra["request"]["state"]["private_note"] = "not admitted"
+        state_extra["request_sha256"] = jev_module._digest(state_extra["request"])
+        state_extra["state_sha256"] = jev_module._digest(state_extra["request"]["state"])
+        with self.assertRaisesRegex(JevError, "candidates differ"):
+            jev_binding.bind(readdress(state_extra), judge)
+
+        false_response_digest = deepcopy(advisory)
+        false_response_digest["response_provenance"]["canonical_sha256"] = "0" * 64
+        with self.assertRaisesRegex(JevError, "canonical response digest"):
+            jev_binding.bind(readdress(false_response_digest), judge)
+
+        response_extra = deepcopy(advisory)
+        response_extra["response"]["untrusted"] = True
+        response_extra["response_provenance"]["canonical_sha256"] = jev_module._digest(
+            response_extra["response"])
+        with self.assertRaisesRegex(JevError, "response fields"):
+            jev_binding.bind(readdress(response_extra), judge)
+
+        for mutate in (
+            lambda item: item["response"]["answers"]["best_candidate"].__setitem__(
+                "type", "invented"),
+            lambda item: item["response"]["answers"]["best_candidate"].__setitem__(
+                "probabilities", "not-an-object"),
+            lambda item: item["response"]["answers"]["has_direct_match"].__setitem__(
+                "noul", "not-a-number"),
+            lambda item: item["response"]["usage"].__setitem__(
+                "input_tokens", "not-an-int"),
+        ):
+            malformed = deepcopy(advisory)
+            mutate(malformed)
+            malformed["response_provenance"]["canonical_sha256"] = jev_module._digest(
+                malformed["response"])
+            with self.assertRaisesRegex(JevError, "response"):
+                jev_binding.bind(readdress(malformed), judge)
 
     def test_binding_cli_does_not_disclose_missing_input_paths(self) -> None:
         output = StringIO()

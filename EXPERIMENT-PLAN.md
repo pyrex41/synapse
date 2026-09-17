@@ -5930,3 +5930,28 @@ This is authoritative executable evidence for the synthetic receipt only.  It is
 the downstream application model or a fresh producer receipt is qualified.  Next action: bind a Jev
 advisory to this exact judge without changing its verdict, then move the same packet flow to a fresh
 downstream receipt whose model sources are present and digest-matched.
+
+### 2026-09-17 integration iteration 6: exact offline Jev advisory binding
+
+Input `a42f3e6`.  A bounded offline Jev response was retained byte-for-byte and bound to the exact
+iteration-5 judge.  The advisory now embeds the canonical request, parsed response, and retained raw
+UTF-8 response; independently recomputable state, request, candidate, canonical-response, and
+raw-response digests bind those documents.  Replay accepts only exact nested schemas and requires the
+raw JSON to equal the parsed response.  The binding rejects a nominally supported judge whenever a
+required operation still carries a missing premise.
+
+The response file digest is `c32799b4…d4e0`; advisory assessment
+`jev:ba115bdb…ac39`, file digest `2185a282…b14d`; and binding
+`jev-judge:302319bb…2f8`, file digest `3d3d4020…8512`.  The binding retains the
+iteration-5 compiled binary digest `67b47247…c2fb`, exit 0, supported verdict, and explicit
+`advisory_may_change_verdict = false`.  Provenance is deliberately
+`offline-file-unattested`, `service_attested = false`; `jev-latest` remains a mutable alias.  Sol's
+final narrow review was READY after unknown nested fields and forged response-provenance digests were
+made rejecting cases.  Focused tests and the complete outgoing privacy scan are the publication gate
+for this checkpoint: the focused suite ran 21 tests, exit 0, in both the cheap host check and the
+pinned devShell; the outgoing diff and retained response/advisory/binding artifacts were clean.
+
+This advances advisory binding, not authority: the packet remains synthetic, has no learn campaign,
+and is not a fresh downstream gate or production qualification.  Next action: use current downstream
+main to produce a receipt for its exact commit, emit the typed model certificate, supply a separate
+exact-certificate reviewer admission, and run the same compiled judge through the downstream wrapper.
