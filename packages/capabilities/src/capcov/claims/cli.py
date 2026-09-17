@@ -239,8 +239,13 @@ def main(argv: list[str]) -> int:
     try:
         if args.tool == "jev":
             if args.command == "bind":
-                artifact = jev_binding.bind(
-                    _load_json(args.advisory), _load_json(args.judge))
+                try:
+                    advisory = _load_json(args.advisory)
+                    judge = _load_json(args.judge)
+                except OSError as exc:
+                    raise jev.JevError(
+                        "invalid-input", "cannot read Jev binding input") from exc
+                artifact = jev_binding.bind(advisory, judge)
                 _emit(artifact, args.out)
                 return 0
             if args.command == "pattern":

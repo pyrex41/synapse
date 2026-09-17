@@ -105,20 +105,40 @@ class JevAdvisoryTests(unittest.TestCase):
     def _judge(self, exit_code: int = 5) -> dict:
         verdict = {0: "supported", 1: "not-supported", 5: "pending-premise"}[exit_code]
         digest = "a" * 64
+        from capcov.claims.souffle import compile as souffle_compile
+        program = "c" * 64
+        souffle = "1" * 64
+        compiler = "2" * 64
+        flags = ["--no-preprocessor", "-j1", "-o"]
+        operation = ({"verdict": "supported", "qualification": "qualified"}
+                     if exit_code == 0 else
+                     {"verdict": "not-supported",
+                      "qualification": ("pending model_well_formed"
+                                        if exit_code == 5 else "unsupported")})
         return {
             "schema": "capcov-compiled-judge-v1",
             "receipt": {"run": "run-17", "model": "b" * 64,
                         "snapshot": "d" * 64},
-            "pack": {"id": "replay-v1", "program_digest": "c" * 64},
+            "pack": {"id": "replay-v1", "program_digest": program},
+            "compiled": {"schema": "capcov-souffle-compiled-v1",
+                         "program_digest": program, "binary_sha256": "3" * 64,
+                         "souffle_sha256": souffle,
+                         "compiler_config_sha256": compiler,
+                         "compile_flags": flags,
+                         "compile_key": souffle_compile.compile_key(
+                             program, souffle, flags,
+                             compiler_config_sha256=compiler)},
             "kernels": {"matched": True, "closure_digest_equal": True,
                         "python_digest": digest, "souffle_digest": digest,
                         "compiled_digest": digest,
                         "souffle_closure_digest": "e" * 64,
                         "compiled_closure_digest": "e" * 64,
-                        "closure_digest": "e" * 64},
-            "ops": {"delete-issue": {"certificate_sha256": None},
-                    "corpus": {"certificate_sha256": "f" * 64}},
+                        "closure_digest": "e" * 64, "failures": {}},
+            "ops": {"delete-issue": {**operation, "certificate_sha256": None},
+                    "corpus": {"verdict": "supported", "qualification": "qualified",
+                               "certificate_sha256": "f" * 64}},
             "required_ops": ["delete-issue"],
+            "contract_findings": [],
             "verdict": verdict, "exit_code": exit_code,
         }
 
@@ -163,6 +183,54 @@ class JevAdvisoryTests(unittest.TestCase):
         contradictory["verdict"] = "supported"
         with self.assertRaisesRegex(JevError, "verdict and exit code"):
             jev_binding.bind(advisory, contradictory)
+
+        forged_compile = deepcopy(judge)
+        forged_compile["compiled"]["binary_sha256"] = "not-a-digest"
+        with self.assertRaisesRegex(JevError, "binary_sha256"):
+            jev_binding.bind(advisory, forged_compile)
+
+        forged_key = deepcopy(judge)
+        forged_key["compiled"]["compile_key"] = "9" * 64
+        with self.assertRaisesRegex(JevError, "key does not match"):
+            jev_binding.bind(advisory, forged_key)
+
+        wrong_result = deepcopy(judge)
+        wrong_result["ops"]["delete-issue"]["qualification"] = "unsupported"
+        with self.assertRaisesRegex(JevError, "required operation"):
+            jev_binding.bind(advisory, wrong_result)
+
+        duplicate = deepcopy(judge)
+        duplicate["required_ops"] = ["delete-issue", "delete-issue"]
+        with self.assertRaisesRegex(JevError, "duplicates"):
+            jev_binding.bind(advisory, duplicate)
+
+        failed = deepcopy(judge)
+        failed["kernels"]["failures"] = {"souffle": "timeout"}
+        with self.assertRaisesRegex(JevError, "operational failures"):
+            jev_binding.bind(advisory, failed)
+
+        finding = deepcopy(judge)
+        finding["contract_findings"] = ["bad receipt"]
+        with self.assertRaisesRegex(JevError, "contract findings"):
+            jev_binding.bind(advisory, finding)
+
+        extended = deepcopy(advisory)
+        extended["may_qualify_claim"] = True
+        core = dict(extended)
+        core.pop("assessment_id")
+        from capcov.claims import jev as jev_module
+        extended["assessment_id"] = f"jev:{jev_module._digest(core)}"
+        with self.assertRaisesRegex(JevError, "unknown fields"):
+            jev_binding.bind(extended, judge)
+
+    def test_binding_cli_does_not_disclose_missing_input_paths(self) -> None:
+        output = StringIO()
+        private_path = "/private/operator/name/advisory.json"
+        with redirect_stdout(output):
+            self.assertEqual(experiment_main([
+                "claims", "jev", "bind", "--advisory", private_path,
+                "--judge", "/missing/judge.json", "--out", "/tmp/out.json"]), 3)
+        self.assertNotIn(private_path, output.getvalue())
 
     def test_binding_cli_writes_content_addressed_artifact(self) -> None:
         advisory = build_artifact(AssessmentRequest.parse(request_document()), api_response())
