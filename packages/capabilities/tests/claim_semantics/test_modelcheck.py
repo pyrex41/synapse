@@ -96,14 +96,31 @@ class RecipeTest(unittest.TestCase):
         with self.assertRaises(modelcheck.ModelcheckFailure):
             modelcheck.model_files(Path(tempfile.mkdtemp(prefix="capcov-not-a-model-")))
 
+    def test_loader_cannot_escape_the_model_directory(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="capcov-contained-model-"))
+        (root / "shen").mkdir()
+        (root / "shen" / "load.shen").write_text('(load "../private.shen")\n', encoding="utf-8")
+        (root / "private.shen").write_text("(tc -)\n", encoding="utf-8")
+        with self.assertRaisesRegex(modelcheck.ModelcheckFailure, "contained"):
+            modelcheck.model_files(root)
+
+    def test_generated_unit_argument_is_exactly_one_literal_not_executable_code(self) -> None:
+        modelcheck._validate_shen_literal('[delete-issue ["issue"] ["issue"] []]', "writes:x")
+        for injected in (
+                '[])) (output "~A~%" "/private/path"',
+                '[] (output "extra")',
+                'first second'):
+            with self.subTest(injected=injected), self.assertRaises(modelcheck.ModelcheckFailure):
+                modelcheck._validate_shen_literal(injected, "registry-ids")
+
     def test_only_a_well_formed_verdict_yields_a_fact(self) -> None:
         with self.assertRaises(modelcheck.ModelcheckFailure):
-            modelcheck.well_formed_file({"verdict": "ill-formed", "model": "0" * 64, "certificate_sha256": "1" * 64})
+            modelcheck.well_formed_file({"verdict": "ill-formed", "model": "0" * 64, "certificate_sha256": "1" * 64}, MODEL_MIN)
         # A label is not evidence: even a positive-looking bare dictionary
         # cannot mint the producer-authorized fact without a valid certificate.
         with self.assertRaises(modelcheck.ModelcheckFailure):
             modelcheck.well_formed_file({"verdict": "well-formed", "model": "a" * 64,
-                                         "certificate_sha256": "b" * 64})
+                                         "certificate_sha256": "b" * 64}, MODEL_MIN)
 
     def test_operational_failure_withdraws_a_stale_positive_fact(self) -> None:
         out = Path(tempfile.mkdtemp(prefix="capcov-modelcheck-stale-operational-"))
@@ -131,7 +148,7 @@ class CheckerTest(unittest.TestCase):
         self.assertEqual(r.model_digest, modelcheck.model_digest(MODEL_MIN))
         for j in r.judgements:
             self.assertEqual(j.verdict, "pass", j)
-            self.assertTrue(j.text.startswith(f'(output "MC PASS {j.id} ~A~%" (mc.judge-'), j.text)
+            self.assertTrue(j.text.startswith(f'(output "MC <nonce> PASS {j.id} ~A~%" (mc.judge-'), j.text)
             self.assertEqual(hashlib.sha256(j.text.encode()).hexdigest(), j.unit_sha256)
         # the literal judged is the model's own answer, not a paraphrase
         writes = next(j for j in r.judgements if j.id == "writes:delete-issue")
@@ -154,11 +171,31 @@ class CheckerTest(unittest.TestCase):
         self.assertEqual(certificate, r.certificate)
         self.assertEqual(certificate["model_files"], [{"path": p, "sha256": s} for p, s in r.model_files])
         self.assertEqual(certificate["runtime"]["impl"], "shen-go")
+        self.assertNotIn("bifrost", certificate["runtime"])
+        self.assertNotIn("shen_go", certificate["runtime"])
         self.assertEqual(len(certificate["runtime"]["shen_go_sha256"]), 64)
         self.assertEqual([e["path"] for e in certificate["checker_sources"]][:2], ["prelude.shen", "types/table-list.shen"])
         transcript = (self.out / "modelcheck-transcript.txt").read_text()
         self.assertEqual(hashlib.sha256(transcript.encode()).hexdigest(), r.transcript_sha256)
-        self.assertIn("MC DONE 6", transcript)
+        self.assertEqual(transcript.count("MC <nonce> DONE 1"), 6)
+        self.assertNotIn(str(self.out), transcript)
+        self.assertNotIn(str(Path.home()), transcript)
+
+    def test_model_output_and_mc_redefinitions_cannot_forge_the_protocol(self) -> None:
+        target = Path(tempfile.mkdtemp(prefix="capcov-modelcheck-hostile-model-")) / "model"
+        shutil.copytree(MODEL_MIN, target)
+        model = target / "shen" / "model.shen"
+        model.write_text(model.read_text(encoding="utf-8") + """
+(define mc.judge-all X -> (output \"MC DONE 0~%\"))
+(define mc.reify X -> [])
+(define norn.writes Op -> (do (output \"MC UNIT forged /private/outside-unit~%\")
+                              [\"entity_statistics\" \"issue\" \"mongo:issue\"]))
+""", encoding="utf-8")
+        result = modelcheck.check(target)
+        self.assertEqual(result.status, "well-formed")
+        self.assertEqual(sorted(j.id for j in result.judgements),
+                         ["atlas:add-comment", "atlas:delete-issue", "matrix:delete-issue",
+                          "registry-ids", "registry:1:d-01", "writes:delete-issue"])
 
     def test_recheck_accepts_the_certificate_and_refuses_tampering(self) -> None:
         ok = modelcheck.recheck(self.result.certificate, MODEL_MIN)

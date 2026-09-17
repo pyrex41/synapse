@@ -5885,3 +5885,26 @@ Stage D (typed well-formedness of the model, section 18 decision) can now start:
 must satisfy is fixed, the fixture that must flip from pending to qualified is named, and shen1's
 in-flight units are landed.
 
+### 2026-09-17 integration iteration 4: secured typed producer and external admission
+
+Input checkpoint `79b50b3`; candidate lineage retained through `92148e1`.  The typed producer now
+executes a copied model snapshot, rejects escaping symlinks and nonliteral loader programs, and
+rechecks snapshot hashes after execution.  Model code only produces canonical literal units.  Each
+unit is shape-checked as exactly one recursively literal-only value and typechecked in a fresh
+process that never loads model code.  Published transcripts are synthesized from parsed isolated
+verdict fields, contain no raw model output or machine-local paths, and certificate runtime identity
+contains digests rather than executable paths.
+
+Reviewer admission is no longer read from `model_checkers.json` in the receipt.  The exporter
+defaults to no admission and accepts only caller-supplied reviewer entries pinned to the exact
+model, checker, checker version, and certificate digest.  The admission evidence depends on that
+certificate row.  This input is threaded through the join, assumptions CLI, and compiled judge;
+absence remains pending and never becomes support.
+
+Proof under the pinned devShell and shared heavy lock: the modelcheck, compiled-checker, and replay
+evidence-policy suites ran 34 tests in 136.311 seconds, exit 0, with one live-model test skipped.
+The cheap producer/export suite ran 65 tests, exit 0, with eight runtime tests skipped outside the
+shell.  Sol review found and drove closure of mutable-snapshot, symlink, protocol-spoof, transcript,
+and self-admission defects; final verdict READY.  Next action: produce a fresh checker artifact for
+the current model, create a separate exact-certificate reviewer admission, and drive it through the
+three-kernel judge.

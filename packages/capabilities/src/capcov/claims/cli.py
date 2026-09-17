@@ -147,7 +147,9 @@ def _assumptions(args: argparse.Namespace) -> int:
     keep = False
     try:
         try:
-            join = replay_join.build(receipt)
+            admissions = (_load_json(args.reviewer_admissions)
+                          if args.reviewer_admissions else ())
+            join = replay_join.build(receipt, reviewer_admissions=admissions)
             if join.bundle is None:
                 _emit({"refusal": "the exporter refused the receipt",
                        "contract_findings": list(join.contract_findings)}, args.out)
@@ -190,17 +192,19 @@ def _assumptions(args: argparse.Namespace) -> int:
 def _modelcheck(args) -> int:
     try:
         result = modelcheck.check(args.model, out_dir=args.out, timeout=args.timeout, keep=args.keep)
-    except modelcheck.ModelcheckUnavailable as exc:
-        _emit({"operational_failure": "modelcheck-unavailable", "error": str(exc)}, None)
+    except modelcheck.ModelcheckUnavailable:
+        _emit({"operational_failure": "modelcheck-unavailable",
+               "error": "the pinned model-checker runtime is unavailable"}, None)
         return 3
-    except modelcheck.ModelcheckFailure as exc:
-        _emit({"operational_failure": "modelcheck-failure", "error": str(exc)}, None)
+    except modelcheck.ModelcheckFailure:
+        _emit({"operational_failure": "modelcheck-failure",
+               "error": "the model-checker refused its input or execution"}, None)
         return 3
     document = {"verdict": result.status, "model": result.model_digest,
                 "judgements": [{"id": j.id, "verdict": j.verdict, "message": j.message} for j in result.judgements],
                 "skipped": [{"op": op, "reason": reason} for op, reason in result.skipped],
                 "certificate_sha256": result.certificate["certificate_sha256"],
-                "fact": result.fact, "workdir": result.workdir,
+                "fact": result.fact, "workdir_retained": result.workdir is not None,
                 "elapsed_seconds": round(result.elapsed_seconds, 3)}
     _emit(document, None)
     return 0 if result.status == "well-formed" else 1
@@ -258,6 +262,9 @@ def main(argv: list[str]) -> int:
         command.add_argument("--receipt", default=None, help="replay receipt directory (default: the committed fixture)")
         command.add_argument("--out", default=None, help="write the join artifacts to this directory")
         command.add_argument("--replay-root", default=None, help="differential replay directory for a kernel mismatch")
+        command.add_argument(
+            "--reviewer-admissions", default=None,
+            help="JSON array of external exact-certificate reviewer admissions")
         if name == "invalidate":
             command.add_argument("--drop", action="append", default=[], required=True, metavar="ID",
                                  help="an asm: id or the evidence id of an assumption row (repeatable)")

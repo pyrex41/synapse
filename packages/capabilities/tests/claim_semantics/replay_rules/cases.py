@@ -155,8 +155,19 @@ def census_facts(ops: tuple[str, ...] = OPS) -> list[dict[str, Any]]:
 # exporter rows -> case facts
 
 
+def reviewer_admissions(receipt_dir: Path) -> list[dict[str, str]]:
+    """Synthetic corpus policy, kept outside the receipt under test."""
+    path = receipt_dir / "model_well_formed.json"
+    if not path.is_file():
+        return []
+    [row] = json.loads(path.read_text(encoding="utf-8"))["rows"]
+    return [{"producer": "reviewer synthetic-corpus-policy", **row}]
+
+
 def exported_facts(receipt_dir: Path, *, drop_relations: tuple[str, ...] = ()) -> tuple[list[dict[str, Any]], str]:
-    result = replay_facts.export_bundle(receipt_dir, run=RUN, describes_indexes=(INDEX,))
+    result = replay_facts.export_bundle(
+        receipt_dir, run=RUN, describes_indexes=(INDEX,),
+        reviewer_admissions=reviewer_admissions(receipt_dir))
     if result.status != replay_facts.STATUS_COMPLETE:
         raise AssertionError(f"export failed: {result.status} {result.messages}")
     bundle = result.bundle
