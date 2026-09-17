@@ -37,3 +37,24 @@
   why-not identifies `undeclared_any` as present.
 - The source-bound target-go pilot derives and explains both the static route
   to SQL and the causal runtime route-to-SQL claim from commit `01fe913`.
+
+## Integrating live experiment heads safely
+
+- Fetch and compare every PR head independently. PR number is not dependency
+  order: the current #51 and #52 heads are already in the integration lineage,
+  while #50 advanced separately and must be merged explicitly.
+- The replay rule pack now ships as package data so an installed wheel can run
+  the judge without the source tree. Keep that copy byte-identical to the
+  reviewed `experiments/` copy; the package-data test is the guard against a
+  source checkout and an installed wheel judging different rules.
+- `mutation_scope_seed(model, run, op)` is deliberately not qualification. It
+  permits corpus enumeration from a closed replay-request/effect scope without
+  depending on the mutant closure that corpus will later establish.
+- A downstream consumer must ground-recheck the seed certificate. Pin the rule
+  pack and rule digests, verify every derivation node, and match primitive rows
+  to the receipt files; top-level witness arrays and syntactically valid hashes
+  are not proof.
+- The machine-wide heavy lock protects Docker, Nix, and producer state across
+  worktrees. A long mutant campaign with live descendants is a verified owner,
+  not a stale lock; prepare cheap integration work while it runs rather than
+  bypassing it.
