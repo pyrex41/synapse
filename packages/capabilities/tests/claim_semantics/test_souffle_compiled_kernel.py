@@ -272,7 +272,7 @@ class TargetGoReceiptThreeKernelsTests(unittest.TestCase):
         self.assertEqual(provenance["schema"], "capcov-souffle-compiled-v1")
         for field in ("compile_key", "program_digest", "binary_sha256", "souffle_sha256"):
             self.assertRegex(provenance[field], HEX64, field)
-        self.assertEqual(provenance["compile_flags"], ["--no-preprocessor", "-j1", "-o"])
+        self.assertEqual(provenance["compile_flags"], list(compiled.COMPILE_FLAGS))
         self.assertEqual(provenance, join.checker.provenance())
         # one name for the compiled closure digest in every artifact of a run
         self.assertEqual(document["kernels"]["compiled_digest"],
