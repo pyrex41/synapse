@@ -5908,3 +5908,25 @@ shell.  Sol review found and drove closure of mutable-snapshot, symlink, protoco
 and self-admission defects; final verdict READY.  Next action: produce a fresh checker artifact for
 the current model, create a separate exact-certificate reviewer admission, and drive it through the
 three-kernel judge.
+
+### 2026-09-17 integration iteration 5: first exact-certificate three-kernel qualification
+
+Input `a1778aa`.  The only committed model source tree digests to
+`5d893da33c10afd55175f142148d7247f483694a1506197c9f53875fb0ed8374`; the old
+synthetic receipt named `5f0d985d…`, so its placeholder was refused as stale.  A fresh checker run
+over the source emitted certificate `3feeda03…36d9`.  A temporary synthetic receipt was rebound to
+the exact model digest, received that exact fact, and was paired with a separate reviewer admission
+pinning model, checker `capcov-modelcheck`, version `1.0.0`, and certificate.
+
+The compiled judge command, with that external admission, exited 0.  Python, interpreted Souffle,
+and compiled Souffle matched at semantic digest `d790d36a…e12b`; the interpreted/compiled closure
+digest was `0ce6961f…076a`.  Rule-program digest `9addbe39…5974`; compiled binary
+`67b47247…c2fb`; `delete-issue` was supported/complete and qualified with no missing premises;
+certificate `9b20ce84…3a58`; repeat-delete had one expected not-found row and no violations.
+`learn_consistent` was absent, not inferred.  Packet `judge.json` digest `4e277849…248c`; a complete
+artifact privacy scan found none of the forbidden private markers.
+
+This is authoritative executable evidence for the synthetic receipt only.  It is not evidence that
+the downstream application model or a fresh producer receipt is qualified.  Next action: bind a Jev
+advisory to this exact judge without changing its verdict, then move the same packet flow to a fresh
+downstream receipt whose model sources are present and digest-matched.
