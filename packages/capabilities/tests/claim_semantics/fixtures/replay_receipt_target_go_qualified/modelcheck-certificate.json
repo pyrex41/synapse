@@ -1,0 +1,234 @@
+{
+ "certificate_sha256": "65cffd45bab056828b514d2f483a33d2f8e587f751c86a78628127520c9b659b",
+ "checker": "capcov-modelcheck",
+ "checker_sources": [
+  {
+   "path": "prelude.shen",
+   "sha256": "8ddda39b4f59f5d77dc85fd28ca3bceeff1601146e4e628d1d7b6ef87cba1f76"
+  },
+  {
+   "path": "types/table-list.shen",
+   "sha256": "33e82236f31ff0eb5de6a8ac4daf801e75e8df517467ce81ae5df5af114c0222"
+  },
+  {
+   "path": "types/wf-writes.shen",
+   "sha256": "662b8ae5002a7bf0f89c21be25d116eb4ea50ae4d71344f9cb02eaad48c95ebc"
+  },
+  {
+   "path": "types/cell.shen",
+   "sha256": "eeec3a3561b100e2dce0b505a60a12f50adcf6792ab34ee0a29bb0c708a58ac5"
+  },
+  {
+   "path": "types/cell-list.shen",
+   "sha256": "8bdc57dbe7cbaeb06db20d49400c554881d7a14d2fbe3a495a8da3109dba4184"
+  },
+  {
+   "path": "types/wf-matrix.shen",
+   "sha256": "6a8fba70195f736d1bf051794a44abedf81e89d192ecf6ebba3b4be5b80ed025"
+  },
+  {
+   "path": "types/wf-atlas.shen",
+   "sha256": "eb787539c107572e393f3ec59a793f09808e25a5acdd2991b2b4786eb18a0a0c"
+  },
+  {
+   "path": "types/wf-registry.shen",
+   "sha256": "01b74f9808f8eee20b3f4051eabe3513f8ce752c0db785ae33ddcfddfd761502"
+  },
+  {
+   "path": "types/id-list.shen",
+   "sha256": "71acc1c001e63c9739084147b127256c7febb00be056b0b9f0d973567dabf7bb"
+  },
+  {
+   "path": "types/judge-writes.shen",
+   "sha256": "c38a81f9bbb3eb35451837d93666e7eb1ea3f618f0fed4380081719e10554dc2"
+  },
+  {
+   "path": "types/judge-matrix.shen",
+   "sha256": "403b6b2b0d88e5ebfb2e439b11485b3f3feac6004fdccc97bfce0829fff6b124"
+  },
+  {
+   "path": "types/judge-atlas.shen",
+   "sha256": "ddb88355357a509a934f7b93b74a5e6a100b48ea959218e730104cae218fd954"
+  },
+  {
+   "path": "types/judge-registry.shen",
+   "sha256": "85125866d64e745c31bb7c43cb2c25d8df34db547197fbb779098b8c6f976160"
+  },
+  {
+   "path": "types/judge-ids.shen",
+   "sha256": "d71aa9ba92eefe4afd918a0a63cd05b4e29fcd32bd9f74d7c61d5dfe77d21def"
+  }
+ ],
+ "checker_version": "1.0.0",
+ "driver_sha256": "3f8578ab886930a0668910d0db8909002ca1a4780e3b22524e661f3db2de96f9",
+ "elapsed_seconds": 0.969,
+ "judgements": [
+  {
+   "id": "atlas:add-comment",
+   "message": "verified",
+   "text": "(output \"MC PASS atlas:add-comment ~A~%\" (mc.judge-atlas [add-comment atomic atomic fail-stop]))",
+   "unit": "atlas_add-comment.shen",
+   "unit_sha256": "1d12ed84d05acf8eed2c90d6d865721e2e0c91cd6c80cac4cbfd33f9363e6f1b",
+   "verdict": "pass"
+  },
+  {
+   "id": "atlas:attach-file",
+   "message": "verified",
+   "text": "(output \"MC PASS atlas:attach-file ~A~%\" (mc.judge-atlas [attach-file atomic atomic fail-stop]))",
+   "unit": "atlas_attach-file.shen",
+   "unit_sha256": "e312c673740b08bd6dacec8c01e8ff0639adc3df82788ab5c88153483524ef39",
+   "verdict": "pass"
+  },
+  {
+   "id": "atlas:create-issue",
+   "message": "verified",
+   "text": "(output \"MC PASS atlas:create-issue ~A~%\" (mc.judge-atlas [create-issue atomic atomic fail-stop]))",
+   "unit": "atlas_create-issue.shen",
+   "unit_sha256": "be42dd05251c35232172b4cce2ec30a7546eaa5bd21bccdff48f31d2b23dc09e",
+   "verdict": "pass"
+  },
+  {
+   "id": "atlas:delete-issue",
+   "message": "verified",
+   "text": "(output \"MC PASS atlas:delete-issue ~A~%\" (mc.judge-atlas [delete-issue atomic non-atomic fail-stop]))",
+   "unit": "atlas_delete-issue.shen",
+   "unit_sha256": "33532028603081e5d74f9f2845c3bfb173fe889c5c1f3ab3e01638f399cfeceb",
+   "verdict": "pass"
+  },
+  {
+   "id": "atlas:delete-issues",
+   "message": "verified",
+   "text": "(output \"MC PASS atlas:delete-issues ~A~%\" (mc.judge-atlas [delete-issues non-atomic non-atomic best-effort]))",
+   "unit": "atlas_delete-issues.shen",
+   "unit_sha256": "ef8517493f3e68111c8639d16782f4d46dafafdc0ed1ce4181a5c02288b48d0e",
+   "verdict": "pass"
+  },
+  {
+   "id": "atlas:edit",
+   "message": "verified",
+   "text": "(output \"MC PASS atlas:edit ~A~%\" (mc.judge-atlas [edit non-atomic eventual fail-stop]))",
+   "unit": "atlas_edit.shen",
+   "unit_sha256": "d461d862b9af408d220ee9c4a9b0d2067628318f00a455d4c7e35dca7004b613",
+   "verdict": "pass"
+  },
+  {
+   "id": "matrix:delete-issue",
+   "message": "verified",
+   "text": "(output \"MC PASS matrix:delete-issue ~A~%\" (mc.judge-matrix [delete-issue [[committed live admits 1] [committed nonlive refuses 0] [aborted live admits 1] [aborted nonlive admits 1] [unknown live admits 2] [unknown nonlive admits 1]]]))",
+   "unit": "matrix_delete-issue.shen",
+   "unit_sha256": "bc12c984e25bdbe973405134bc03026b45016615df8bd5361d0c97b19407f795",
+   "verdict": "pass"
+  },
+  {
+   "id": "registry-ids",
+   "message": "verified",
+   "text": "(output \"MC PASS registry-ids ~A~%\" (mc.judge-ids [d-01 d-02]))",
+   "unit": "registry-ids.shen",
+   "unit_sha256": "b427038dcc84eda26556236c43f63854a6a948bfada24f1184d72f6c94616b69",
+   "verdict": "pass"
+  },
+  {
+   "id": "registry:1:d-01",
+   "message": "verified",
+   "text": "(output \"MC PASS registry:1:d-01 ~A~%\" (mc.judge-registry [d-01 delete-issue no-orphan-child [no-orphan-child no-leaked-blob no-dangling-file no-orphan-changelog no-version-regression no-path-prefix-loss no-vendor-guest-gap] [delete-issue delete-issues create-issue add-comment attach-file edit] dispatches dispatches]))",
+   "unit": "registry_1_d-01.shen",
+   "unit_sha256": "885abcb2371113057cd6ce1243aeaf9eed2c6d3ccf40c3b5e69af42691e08e3b",
+   "verdict": "pass"
+  },
+  {
+   "id": "registry:2:d-02",
+   "message": "verified",
+   "text": "(output \"MC PASS registry:2:d-02 ~A~%\" (mc.judge-registry [d-02 delete-issue no-leaked-blob [no-orphan-child no-leaked-blob no-dangling-file no-orphan-changelog no-version-regression no-path-prefix-loss no-vendor-guest-gap] [delete-issue delete-issues create-issue add-comment attach-file edit] dispatches dispatches]))",
+   "unit": "registry_2_d-02.shen",
+   "unit_sha256": "fd165c22d82842e222a5a016c2cdd8e5dec6c6327ad7faea453837efdb4207fd",
+   "verdict": "pass"
+  },
+  {
+   "id": "writes:delete-issue",
+   "message": "verified",
+   "text": "(output \"MC PASS writes:delete-issue ~A~%\" (mc.judge-writes [delete-issue [\"entity_statistics\" \"issue\" \"mongo:issue\"] [\"entity_statistics\" \"issue\" \"mongo:issue\"] [\"entity_statistics\" \"comment\" \"file\" \"issue\" \"mongo:issue\"]]))",
+   "unit": "writes_delete-issue.shen",
+   "unit_sha256": "797a2b308d67cbea96d2e0182d04aa140ebd3e477d4378134fdf31f9cadbeb88",
+   "verdict": "pass"
+  }
+ ],
+ "kind": "capcov-modelcheck-certificate-v1",
+ "model": "08380c9c336dc3f8e693aeea0589a60cfe808836a75bf2b815fa7cd8b39f0e7b",
+ "model_digest_recipe": "sha256 over the concatenated bytes of shen/load.shen and the files it loads, in load order",
+ "model_files": [
+  {
+   "path": "shen/load.shen",
+   "sha256": "80f2908a439437df94f96b560c6d48e11490422a9a85a9ccc0178f3ad76faf39"
+  },
+  {
+   "path": "shen/vocab.shen",
+   "sha256": "4c0248187a61fc47c4880aafe8e2abb2c6b8581a9740df6dfe338f13bca7f6f1"
+  },
+  {
+   "path": "shen/atlas.shen",
+   "sha256": "51f91db6317f221ada931818647d297704dc50028c840de24e1e0bc3f06dc976"
+  },
+  {
+   "path": "shen/delete-issue.shen",
+   "sha256": "320c6b7ab3ff9784fea2ddde7abd74a5d3f2c9b717dccb38b4b1017f38098c85"
+  },
+  {
+   "path": "shen/projection.shen",
+   "sha256": "600189a33f9838448411d1980deeb56fe1278aaf6a3b42e14a7ea5a274414eb2"
+  },
+  {
+   "path": "shen/registry.shen",
+   "sha256": "0693b74c3d470053f802adca5327f2d8e7ea46dc2a60f7030ba24951be396d7a"
+  },
+  {
+   "path": "shen/invariants.shen",
+   "sha256": "2c74bf243ae5cafd0ca443a83d0298e7cc19226098475b2fddb2594a28f4b791"
+  },
+  {
+   "path": "shen/effects.shen",
+   "sha256": "ef6aa815282bb96c469c130bf7380c4a917f8635d24f6f07281543ffd50c6080"
+  },
+  {
+   "path": "shen/admissible-as-is.shen",
+   "sha256": "1e4b9ebf9ac62456daa421a790ce2ac32968a347b5bba7cec07e0a1e8d6bd014"
+  }
+ ],
+ "runtime": {
+  "bifrost": "bifrost",
+  "impl": "shen-go",
+  "invocation": [
+   "bifrost",
+   "run",
+   "--impl",
+   "shen-go",
+   "--raw",
+   "<driver.shen>"
+  ],
+  "shen_go": "shen-go",
+  "shen_go_sha256": "05cac13837e0a78ca207030540721468e13d910979692cb9c1c4b9280f72a29d"
+ },
+ "skipped": [
+  {
+   "op": "delete-issues",
+   "reason": "no as-is target on any live witness"
+  },
+  {
+   "op": "create-issue",
+   "reason": "no as-is target on any live witness"
+  },
+  {
+   "op": "add-comment",
+   "reason": "no as-is target on any live witness"
+  },
+  {
+   "op": "attach-file",
+   "reason": "no as-is target on any live witness"
+  },
+  {
+   "op": "edit",
+   "reason": "no as-is target on any live witness"
+  }
+ ],
+ "transcript_sha256": "55965b910c75401b5f090ccb7854b4d0b3de7d7111bfbf798c71b7fc78fda89e",
+ "verdict": "well-formed"
+}

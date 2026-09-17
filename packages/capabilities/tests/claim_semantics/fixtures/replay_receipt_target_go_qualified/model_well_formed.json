@@ -1,0 +1,11 @@
+{
+ "producer": "modelcheck capcov-modelcheck 1.0.0 model:08380c9c336d",
+ "rows": [
+  {
+   "certificate": "65cffd45bab056828b514d2f483a33d2f8e587f751c86a78628127520c9b659b",
+   "checker": "capcov-modelcheck",
+   "checker_version": "1.0.0",
+   "model": "08380c9c336dc3f8e693aeea0589a60cfe808836a75bf2b815fa7cd8b39f0e7b"
+  }
+ ]
+}
