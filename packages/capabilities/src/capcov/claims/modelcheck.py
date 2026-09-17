@@ -160,8 +160,27 @@ def model_files(model_dir: str | os.PathLike[str]) -> list[str]:
     if not loader.is_file():
         raise ModelcheckFailure(f"{loader} is not a file; a model directory holds shen/load.shen")
     files = ["shen/load.shen"]
+    in_comment = False
     for line in loader.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
+        if in_comment:
+            if "*\\" in stripped:
+                _, _, trailing = stripped.partition("*\\")
+                if trailing.strip():
+                    raise ModelcheckFailure(
+                        "load.shen block comments may not conceal trailing forms")
+                in_comment = False
+            continue
+        if stripped.startswith(r"\*"):
+            comment = stripped[2:]
+            if "*\\" in comment:
+                _, _, trailing = comment.partition("*\\")
+                if trailing.strip():
+                    raise ModelcheckFailure(
+                        "load.shen block comments may not conceal trailing forms")
+            else:
+                in_comment = True
+            continue
         match = _LOAD_LINE.match(stripped)
         if match:
             relative = Path(match.group(1))
@@ -169,9 +188,11 @@ def model_files(model_dir: str | os.PathLike[str]) -> list[str]:
                 raise ModelcheckFailure(
                     "load.shen entries must be relative paths contained by the model directory")
             files.append(relative.as_posix())
-        elif stripped and stripped != "(tc -)" and not (stripped.startswith(r"\*") and stripped.endswith("*\\")):
+        elif stripped and stripped != "(tc -)":
             raise ModelcheckFailure(
-                "load.shen may contain only (tc -), literal contained load forms, and one-line comments")
+                "load.shen may contain only (tc -), literal contained load forms, and block comments")
+    if in_comment:
+        raise ModelcheckFailure("load.shen contains an unclosed block comment")
     for relative in files:
         candidate = root / relative
         if not candidate.is_file():

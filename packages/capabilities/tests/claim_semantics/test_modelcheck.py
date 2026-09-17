@@ -104,6 +104,29 @@ class RecipeTest(unittest.TestCase):
         with self.assertRaisesRegex(modelcheck.ModelcheckFailure, "contained"):
             modelcheck.model_files(root)
 
+    def test_loader_accepts_multiline_block_comments_without_interpreting_them(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="capcov-commented-model-"))
+        (root / "shen").mkdir()
+        (root / "shen" / "load.shen").write_text(
+            '\\* documentation\n(load "shen/not-loaded.shen")\n*\\\n'
+            '(tc -)\n(load "shen/model.shen")\n', encoding="utf-8")
+        (root / "shen" / "model.shen").write_text("(tc -)\n", encoding="utf-8")
+        self.assertEqual(
+            modelcheck.model_files(root), ["shen/load.shen", "shen/model.shen"])
+
+    def test_loader_rejects_unclosed_or_trailing_block_comment_forms(self) -> None:
+        for loader in (
+                '\\* unclosed\n',
+                '\\* comment *\\ (load "shen/model.shen")\n',
+                '\\* multiline\n*\\ (load "shen/model.shen")\n',
+                '*\\\n'):
+            with self.subTest(loader=loader):
+                root = Path(tempfile.mkdtemp(prefix="capcov-bad-comment-model-"))
+                (root / "shen").mkdir()
+                (root / "shen" / "load.shen").write_text(loader, encoding="utf-8")
+                with self.assertRaises(modelcheck.ModelcheckFailure):
+                    modelcheck.model_files(root)
+
     def test_generated_unit_argument_is_exactly_one_literal_not_executable_code(self) -> None:
         modelcheck._validate_shen_literal('[delete-issue ["issue"] ["issue"] []]', "writes:x")
         for injected in (
