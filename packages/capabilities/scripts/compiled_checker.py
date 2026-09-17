@@ -189,6 +189,14 @@ def _judge_document(join: replay_join.ReplayJoin, required: list[str], *,
             "python_digest": outcome.python.canonical_digest,
             "souffle_digest": outcome.souffle.canonical_digest,
             "compiled_digest": getattr(outcome, "compiled", None) and outcome.compiled.canonical_digest,
+            # The canonical digests above cover normalized relations plus
+            # claim verdicts.  These are the independent Souffle engines'
+            # actual normalized-closure digests; keep the concepts distinct.
+            "souffle_closure_digest": outcome.souffle.closure_digest,
+            "compiled_closure_digest": (getattr(outcome, "compiled", None)
+                                        and outcome.compiled.closure_digest),
+            "closure_digest": (outcome.souffle.closure_digest
+                               if getattr(outcome, "closure_digest_equal", False) else None),
             "closure_digest_equal": getattr(outcome, "closure_digest_equal", False),
             "interpreter_seconds": round(timings.get("souffle", 0.0), 3),
             "compiled_seconds": round(timings.get("souffle-compiled", 0.0), 3),

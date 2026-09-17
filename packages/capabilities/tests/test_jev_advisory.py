@@ -21,6 +21,7 @@ from capcov.claims.jev_patterns import (
     assess as assess_pattern, build_artifact as build_pattern_artifact,
     claims_bundle as pattern_claims_bundle,
 )
+from capcov.claims import jev_binding
 from capcov.claims.validation import validate_bundle
 
 
@@ -101,6 +102,82 @@ def pattern_response(match: float = .8, sufficient: float = .3,
 
 
 class JevAdvisoryTests(unittest.TestCase):
+    def _judge(self, exit_code: int = 5) -> dict:
+        verdict = {0: "supported", 1: "not-supported", 5: "pending-premise"}[exit_code]
+        digest = "a" * 64
+        return {
+            "schema": "capcov-compiled-judge-v1",
+            "receipt": {"run": "run-17", "model": "b" * 64,
+                        "snapshot": "d" * 64},
+            "pack": {"id": "replay-v1", "program_digest": "c" * 64},
+            "kernels": {"matched": True, "closure_digest_equal": True,
+                        "python_digest": digest, "souffle_digest": digest,
+                        "compiled_digest": digest,
+                        "souffle_closure_digest": "e" * 64,
+                        "compiled_closure_digest": "e" * 64,
+                        "closure_digest": "e" * 64},
+            "ops": {"delete-issue": {"certificate_sha256": None},
+                    "corpus": {"certificate_sha256": "f" * 64}},
+            "required_ops": ["delete-issue"],
+            "verdict": verdict, "exit_code": exit_code,
+        }
+
+    def test_binding_pins_advisory_and_judge_without_changing_verdict(self) -> None:
+        advisory = build_artifact(AssessmentRequest.parse(request_document()), api_response())
+        judge = self._judge(5)
+        binding = jev_binding.bind(advisory, judge)
+        self.assertEqual(binding["judge"]["exit_code"], 5)
+        self.assertEqual(binding["judge"]["verdict"], "pending-premise")
+        self.assertEqual(binding["judge"]["run"], "run-17")
+        self.assertEqual(binding["judge"]["model_digest"], "b" * 64)
+        self.assertEqual(binding["judge"]["rule_program_digest"], "c" * 64)
+        self.assertEqual(binding["judge"]["kernel_semantics_digest"], "a" * 64)
+        self.assertEqual(binding["judge"]["closure_digest"], "e" * 64)
+        self.assertEqual(binding["judge"]["snapshot_digest"], "d" * 64)
+        self.assertEqual(binding["judge"]["certificate_digests"],
+                         {"corpus": "f" * 64, "delete-issue": None})
+        self.assertFalse(binding["authority"]["advisory_may_change_verdict"])
+        self.assertFalse(binding["authority"]["advisory_may_satisfy_missing_premise"])
+        jev_binding.validate(binding, advisory, judge)
+
+    def test_binding_rejects_mismatch_and_kernel_or_verdict_ambiguity(self) -> None:
+        advisory = build_artifact(AssessmentRequest.parse(request_document()), api_response())
+        judge = self._judge()
+        binding = jev_binding.bind(advisory, judge)
+        changed = deepcopy(judge)
+        changed["receipt"]["run"] = "other-run"
+        with self.assertRaisesRegex(JevError, "binding does not match"):
+            jev_binding.validate(binding, advisory, changed)
+
+        mismatch = deepcopy(judge)
+        mismatch["kernels"]["compiled_digest"] = "d" * 64
+        with self.assertRaisesRegex(JevError, "semantic digests"):
+            jev_binding.bind(advisory, mismatch)
+
+        closure_mismatch = deepcopy(judge)
+        closure_mismatch["kernels"]["compiled_closure_digest"] = "9" * 64
+        with self.assertRaisesRegex(JevError, "closure digests"):
+            jev_binding.bind(advisory, closure_mismatch)
+
+        contradictory = deepcopy(judge)
+        contradictory["verdict"] = "supported"
+        with self.assertRaisesRegex(JevError, "verdict and exit code"):
+            jev_binding.bind(advisory, contradictory)
+
+    def test_binding_cli_writes_content_addressed_artifact(self) -> None:
+        advisory = build_artifact(AssessmentRequest.parse(request_document()), api_response())
+        with tempfile.TemporaryDirectory() as tmp:
+            advisory_path = Path(tmp) / "advisory.json"
+            judge_path = Path(tmp) / "judge.json"
+            out = Path(tmp) / "binding.json"
+            advisory_path.write_text(json.dumps(advisory), encoding="utf-8")
+            judge_path.write_text(json.dumps(self._judge()), encoding="utf-8")
+            self.assertEqual(experiment_main([
+                "claims", "jev", "bind", "--advisory", str(advisory_path),
+                "--judge", str(judge_path), "--out", str(out)]), 0)
+            written = json.loads(out.read_text(encoding="utf-8"))
+            self.assertTrue(written["binding_id"].startswith("jev-judge:"))
+
     def test_pattern_packet_has_no_freeform_hypothesis_slot(self) -> None:
         request = PatternRequest.parse(pattern_request_document())
         payload = request.payload()

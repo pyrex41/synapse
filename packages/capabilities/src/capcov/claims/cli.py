@@ -54,7 +54,7 @@ from pathlib import Path
 
 from .ir import BundleIngestionError, bundle_from_json
 from .validation import ValidationError
-from . import jev, jev_patterns, shen
+from . import jev, jev_binding, jev_patterns, shen
 from .static.certificate import DEFAULT_MAX_DEPTH, DEFAULT_MAX_NODES
 
 
@@ -211,6 +211,11 @@ def main(argv: list[str]) -> int:
     jev_pattern.add_argument("--out", default=None)
     jev_pattern.add_argument("--claims-out", default=None,
                              help="write assumption-only pattern and sensitivity facts")
+    jev_bind = jev_sub.add_parser(
+        "bind", help="bind an advisory to an exact deterministic judge artifact")
+    jev_bind.add_argument("--advisory", required=True)
+    jev_bind.add_argument("--judge", required=True)
+    jev_bind.add_argument("--out", required=True)
     shen_parser = claims_sub.add_parser("shen", help="executable Shen semantic workbench (section 18)")
     shen_sub = shen_parser.add_subparsers(dest="command", required=True)
     _common(shen_sub.add_parser("authority", help="structural authority checks over a rule pack"), need_row=False)
@@ -233,6 +238,11 @@ def main(argv: list[str]) -> int:
 
     try:
         if args.tool == "jev":
+            if args.command == "bind":
+                artifact = jev_binding.bind(
+                    _load_json(args.advisory), _load_json(args.judge))
+                _emit(artifact, args.out)
+                return 0
             if args.command == "pattern":
                 request = jev_patterns.PatternRequest.parse(_load_json(args.request))
                 if args.responses:
