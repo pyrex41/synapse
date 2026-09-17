@@ -89,17 +89,23 @@ def _with_synthetic_certificate(source: Path, destination: Path) -> Path:
 
 
 def _add_synthetic_certificate(destination: Path) -> Path:
-    """Write the synthetic ``model_well_formed`` / ``model_checkers`` pair into a staged copy."""
+    """Write a synthetic ``model_well_formed`` fact into a staged copy."""
     model = json.loads((destination / "receipt.json").read_text())["model"]
     checker, version = SYNTHETIC_CHECKER
     (destination / "model_well_formed.json").write_text(json.dumps(
         {"producer": f"modelcheck {checker} {version} model:{model[:12]}",
          "rows": [{"model": model, "checker": checker, "checker_version": version,
                    "certificate": SYNTHETIC_CERTIFICATE}]}, indent=1, sort_keys=True) + "\n")
-    (destination / "model_checkers.json").write_text(json.dumps(
-        {"producer": "reviewer synthetic test-local admitted model checkers",
-         "rows": [{"checker": checker, "checker_version": version}]}, indent=1, sort_keys=True) + "\n")
     return destination
+
+
+def _synthetic_admissions(destination: Path) -> list[dict[str, str]]:
+    """Return the separate reviewer authority for the test-local certificate."""
+    model = json.loads((destination / "receipt.json").read_text())["model"]
+    checker, version = SYNTHETIC_CHECKER
+    return [{"producer": "reviewer synthetic test-local exact certificate review",
+             "model": model, "checker": checker, "checker_version": version,
+             "certificate": SYNTHETIC_CERTIFICATE}]
 
 
 def _souffle() -> None:
@@ -118,7 +124,8 @@ class _EvaluatedFixture(unittest.TestCase):
         _souffle()
         cls.replay_root = tempfile.mkdtemp(prefix="capcov-assumption-registry-")
         cls.staged = Path(tempfile.mkdtemp(prefix="capcov-assumption-registry-receipt-"))
-        cls.join = replay_join.build(_with_synthetic_certificate(FIXTURE, cls.staged / "receipt"))
+        receipt = _with_synthetic_certificate(FIXTURE, cls.staged / "receipt")
+        cls.join = replay_join.build(receipt, reviewer_admissions=_synthetic_admissions(receipt))
         if cls.join.bundle is None:
             raise AssertionError("CONTRACT FINDING: " + "; ".join(cls.join.contract_findings))
         replay_join.evaluate_join(cls.join, cls.replay_root)
@@ -515,7 +522,8 @@ class UnreferencedAssumptionTest(unittest.TestCase):
         path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         _add_synthetic_certificate(cls.directory)  # the premise this module is not about
         cls.replay_root = tempfile.mkdtemp(prefix="capcov-assumption-unreferenced-diff-")
-        cls.join = replay_join.build(cls.directory)
+        cls.join = replay_join.build(
+            cls.directory, reviewer_admissions=_synthetic_admissions(cls.directory))
         if cls.join.bundle is None:
             raise AssertionError("CONTRACT FINDING: " + "; ".join(cls.join.contract_findings))
         replay_join.evaluate_join(cls.join, cls.replay_root)
@@ -851,6 +859,8 @@ class CommandLineTest(unittest.TestCase):
         _souffle()
         cls.tmp = Path(tempfile.mkdtemp(prefix="capcov-assumption-cli-receipt-"))
         cls.receipt = _with_synthetic_certificate(FIXTURE, cls.tmp / "receipt")
+        cls.admissions = cls.tmp / "reviewer-admissions.json"
+        cls.admissions.write_text(json.dumps(_synthetic_admissions(cls.receipt), indent=2) + "\n")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -863,8 +873,11 @@ class CommandLineTest(unittest.TestCase):
         from capcov.claims import cli
 
         buffer = io.StringIO()
+        arguments = list(argv)
+        if "--reviewer-admissions" not in arguments:
+            arguments.extend(["--reviewer-admissions", str(self.admissions)])
         with contextlib.redirect_stdout(buffer):
-            code = cli.main(list(argv))
+            code = cli.main(arguments)
         return code, buffer.getvalue()
 
     @staticmethod
@@ -896,6 +909,60 @@ class CommandLineTest(unittest.TestCase):
                              "a replay root the CLI made itself is removed when nothing needs it")
         finally:
             shutil.rmtree(out, ignore_errors=True)
+
+    def test_malformed_reviewer_admissions_refuse_without_a_traceback(self) -> None:
+        malformed = self.tmp / "malformed-admissions.json"
+        malformed.write_text("not-json\n", encoding="utf-8")
+        code, text = self._run(
+            "claims", "assumptions", "registry",
+            "--receipt", str(self.receipt),
+            "--reviewer-admissions", str(malformed),
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(text),
+                         {"refusal": "reviewer admissions are not readable JSON"})
+        self.assertNotIn(str(malformed), text)
+
+    def test_unreadable_reviewer_admissions_refuse_without_a_path(self) -> None:
+        missing = self.tmp / "missing-admissions.json"
+        code, text = self._run(
+            "claims", "assumptions", "registry",
+            "--receipt", str(self.receipt),
+            "--reviewer-admissions", str(missing),
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(text),
+                         {"refusal": "reviewer admissions are not readable JSON"})
+        self.assertNotIn(str(missing), text)
+
+    def test_non_utf8_reviewer_admissions_refuse_without_a_traceback(self) -> None:
+        malformed = self.tmp / "non-utf8-admissions.json"
+        malformed.write_bytes(b"\xff\xfe")
+        code, text = self._run(
+            "claims", "assumptions", "registry",
+            "--receipt", str(self.receipt),
+            "--reviewer-admissions", str(malformed),
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(text),
+                         {"refusal": "reviewer admissions are not readable JSON"})
+
+    def test_unrelated_oserror_is_not_mislabeled_as_bad_admissions(self) -> None:
+        from capcov.claims import cli
+
+        module = cli._join_module()
+        real = module.build
+
+        def raising(*args, **kwargs):
+            raise OSError("kernel unavailable")
+
+        module.build = raising
+        try:
+            with self.assertRaisesRegex(OSError, "kernel unavailable"):
+                self._run("claims", "assumptions", "registry",
+                          "--receipt", str(self.receipt))
+        finally:
+            module.build = real
 
     def test_a_kernel_disagreement_on_the_claims_is_exit_3(self) -> None:
         """``certify_claims`` raises ``AssertionError``; the contract calls that 3, not a traceback."""
