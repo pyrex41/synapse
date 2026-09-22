@@ -249,12 +249,14 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize.normalize(None), None)
         self.assertEqual(normalize.normalize(("a", "2026-01-02 03:04:05")), ["a", "<volatile-datetime>"])
 
-    def test_policy_identity_is_v4_and_historical_v3_still_validates(self) -> None:
+    def test_policy_identity_is_v5_and_historical_v4_still_validates(self) -> None:
         identity = normalize.comparison_policy_identity()
         self.assertEqual(identity["format"], normalize.POLICY_IDENTITY_FORMAT)
-        self.assertEqual(identity["normalization_version"], "v4")
+        self.assertEqual(identity["normalization_version"], "v5")
         self.assertEqual(identity["config"]["generated_id_keys"], ["mob_id", "uuid"])
         self.assertEqual(identity["config"]["password_keys"], ["password"])
+        self.assertIn("/account/confirm-email", identity["config"]["confirm_email_url_pattern"])
+        self.assertIn("verifyToken", identity["config"]["confirm_email_url_pattern"])
         self.assertTrue(normalize.validate_comparison_policy_identity(identity))
         config = {
             "normalization_version": "v2",
@@ -299,6 +301,23 @@ class NormalizeTests(unittest.TestCase):
         }
         historical_v3 = {**core_v3, "policy_sha256": normalize._json_sha256(core_v3)}
         self.assertTrue(normalize.validate_comparison_policy_identity(historical_v3))
+        config_v4 = {
+            **config_v3,
+            "normalization_version": "v4",
+            "password_keys": ["password"],
+            "hex32_value_pattern": "z",
+            "hex32_value_flags": 0,
+        }
+        core_v4 = {
+            "format": normalize.POLICY_IDENTITY_V4,
+            "normalization_version": "v4",
+            "source_sha256": "a" * 64,
+            "implementation_sha256": "b" * 64,
+            "config": config_v4,
+            "config_sha256": normalize._json_sha256(config_v4),
+        }
+        historical_v4 = {**core_v4, "policy_sha256": normalize._json_sha256(core_v4)}
+        self.assertTrue(normalize.validate_comparison_policy_identity(historical_v4))
 
 
 def inspection(rows=None, collections=None, queues=None, redis_keys=()):
@@ -487,6 +506,37 @@ class FirstDifferenceTests(unittest.TestCase):
         self.assertIsNotNone(diff.first_difference(
             {"activation_url": activation},
             {"activation_url": "https://fg_demo.invalid/account/confirm-email?verifyToken=abc"}))
+
+    def test_confirm_email_verify_token_compares_equal_on_loopback(self) -> None:
+        recorded = "https://127.0.0.1:53577/account/confirm-email?verifyToken=abc"
+        candidate = "https://127.0.0.1:58892/account/confirm-email?verifyToken=xyz"
+        self.assertIsNone(diff.first_difference(
+            {"activation_url": recorded}, {"activation_url": candidate}))
+        left, right = normalize.align_compared(
+            {"activation_url": recorded}, {"activation_url": candidate})
+        self.assertEqual(left, {"activation_url": "<volatile>"})
+        self.assertEqual(right, {"activation_url": "<volatile>"})
+        self.assertIsNone(diff.first_difference(
+            {"activation_url": recorded},
+            {"activation_url": "https://127.0.0.1:53577/account/confirm-email?verifyToken=xyz"}))
+        self.assertEqual(
+            normalize.normalize({"activation_url": recorded}),
+            {"activation_url": recorded})
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": recorded},
+            {"activation_url": "https://127.0.0.1:58892/inquire/account/confirm-email?verifyToken=xyz"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": recorded},
+            {"activation_url": "https://fg_demo.invalid/account/confirm-email?verifyToken=xyz"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": recorded},
+            {"activation_url": "https://10.0.0.2:58892/account/confirm-email?verifyToken=xyz"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": recorded},
+            {"activation_url": "https://127.0.0.1:58892/account/confirm-email"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": recorded},
+            {"activation_url": "https://127.0.0.1:58892/account/confirm-email?verifyToken="}))
 
     def test_password_hex32_is_volatile_and_other_passwords_compare(self) -> None:
         recorded = "0123456789abcdef0123456789abcdef"
