@@ -153,8 +153,9 @@ def first_difference(expected, actual, path: str = "") -> str | None:
     The root call applies the frozen comparison policy's paired masks first
     (generated ``mob_id`` / ``uuid`` values, a ``password`` that is 32 hex
     characters on both sides, a ``127.0.0.1`` URL that differs only by
-    port, and an ``https://127.0.0.1`` ``/account/confirm-email`` URL whose
-    port and ``verifyToken`` may differ) so both sides show ``<volatile>``
+    port, an ``https://127.0.0.1`` ``/account/confirm-email`` URL whose
+    port and ``verifyToken`` may differ, and a ``reminder_key`` that is a
+    non-empty token on both sides) so both sides show ``<volatile>``
     before the walk.
     """
     if path == "":

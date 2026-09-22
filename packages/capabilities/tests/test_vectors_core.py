@@ -249,12 +249,14 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize.normalize(None), None)
         self.assertEqual(normalize.normalize(("a", "2026-01-02 03:04:05")), ["a", "<volatile-datetime>"])
 
-    def test_policy_identity_is_v5_and_historical_v4_still_validates(self) -> None:
+    def test_policy_identity_is_v6_and_historical_v5_still_validates(self) -> None:
         identity = normalize.comparison_policy_identity()
         self.assertEqual(identity["format"], normalize.POLICY_IDENTITY_FORMAT)
-        self.assertEqual(identity["normalization_version"], "v5")
+        self.assertEqual(identity["normalization_version"], "v6")
         self.assertEqual(identity["config"]["generated_id_keys"], ["mob_id", "uuid"])
         self.assertEqual(identity["config"]["password_keys"], ["password"])
+        self.assertEqual(identity["config"]["reminder_keys"], ["reminder_key"])
+        self.assertIn(".+", identity["config"]["token_value_pattern"])
         self.assertIn("/account/confirm-email", identity["config"]["confirm_email_url_pattern"])
         self.assertIn("verifyToken", identity["config"]["confirm_email_url_pattern"])
         self.assertTrue(normalize.validate_comparison_policy_identity(identity))
@@ -318,6 +320,22 @@ class NormalizeTests(unittest.TestCase):
         }
         historical_v4 = {**core_v4, "policy_sha256": normalize._json_sha256(core_v4)}
         self.assertTrue(normalize.validate_comparison_policy_identity(historical_v4))
+        config_v5 = {
+            **config_v4,
+            "normalization_version": "v5",
+            "confirm_email_url_pattern": "w",
+            "confirm_email_url_flags": 0,
+        }
+        core_v5 = {
+            "format": normalize.POLICY_IDENTITY_V5,
+            "normalization_version": "v5",
+            "source_sha256": "a" * 64,
+            "implementation_sha256": "b" * 64,
+            "config": config_v5,
+            "config_sha256": normalize._json_sha256(config_v5),
+        }
+        historical_v5 = {**core_v5, "policy_sha256": normalize._json_sha256(core_v5)}
+        self.assertTrue(normalize.validate_comparison_policy_identity(historical_v5))
 
 
 def inspection(rows=None, collections=None, queues=None, redis_keys=()):
@@ -564,6 +582,36 @@ class FirstDifferenceTests(unittest.TestCase):
         self.assertIsNotNone(diff.first_difference({"secret": recorded}, {"secret": candidate}))
         self.assertEqual(normalize.normalize({"password": recorded, "secret": recorded}),
                          {"password": recorded, "secret": recorded})
+
+    def test_reminder_key_nonempty_tokens_are_volatile_and_empty_against_token_fails(self) -> None:
+        recorded = "recorded-reminder-token"
+        candidate = "candidate-reminder-token"
+        self.assertIsNone(diff.first_difference(
+            {"reminder_key": recorded}, {"reminder_key": candidate}))
+        left, right = normalize.align_compared(
+            {"reminder_key": recorded}, {"reminder_key": candidate})
+        self.assertEqual(left, {"reminder_key": "<volatile>"})
+        self.assertEqual(right, {"reminder_key": "<volatile>"})
+        same_left, same_right = normalize.align_compared(
+            {"reminder_key": recorded}, {"reminder_key": recorded})
+        self.assertEqual(same_left, {"reminder_key": "<volatile>"})
+        self.assertEqual(same_right, {"reminder_key": "<volatile>"})
+        empty_left, empty_right = normalize.align_compared(
+            {"reminder_key": ""}, {"reminder_key": ""})
+        self.assertEqual(empty_left, {"reminder_key": ""})
+        self.assertEqual(empty_right, {"reminder_key": ""})
+        self.assertIsNotNone(diff.first_difference(
+            {"reminder_key": ""}, {"reminder_key": candidate}))
+        self.assertIsNotNone(diff.first_difference(
+            {"reminder_key": None}, {"reminder_key": candidate}))
+        other_left, other_right = normalize.align_compared(
+            {"other_key": recorded}, {"other_key": candidate})
+        self.assertEqual(other_left, {"other_key": recorded})
+        self.assertEqual(other_right, {"other_key": candidate})
+        self.assertIsNotNone(diff.first_difference(
+            {"other_key": recorded}, {"other_key": candidate}))
+        self.assertEqual(normalize.normalize({"reminder_key": recorded}),
+                         {"reminder_key": recorded})
 
 
 class ArtifactRoundTripTests(unittest.TestCase):

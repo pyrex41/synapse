@@ -32,9 +32,10 @@ The design, fixed here and not per consumer:
   versioned policy in ``normalize`` masks volatile values (timestamps, tokens,
   generated ids, ``mob_id`` and ``uuid`` when the value is a UUID, a
   ``password`` that is 32 hex characters on both sides, a
-  ``127.0.0.1`` URL whose only difference is the port, and an
+  ``127.0.0.1`` URL whose only difference is the port, an
   ``https://127.0.0.1`` ``/account/confirm-email`` URL with any port and a
-  ``verifyToken`` query value) on BOTH sides when they
+  ``verifyToken`` query value, and a ``reminder_key`` that is a non-empty
+  token on both sides) on BOTH sides when they
   are compared, so a policy change never forces a re-record. Replay artifact v3 separately binds frozen policy config,
   imported source bytes and loaded normalizer code identity; replay refuses to
   publish if the source file drifts before publication. Recording provenance
