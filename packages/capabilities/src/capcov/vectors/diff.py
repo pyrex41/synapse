@@ -35,7 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from .normalize import normalize
+from .normalize import align_compared, normalize
 
 ROW_KINDS = ("rows", "tables", "mysql", "sql")
 COLLECTION_KINDS = ("collections", "documents", "mongo")
@@ -149,7 +149,13 @@ def first_difference(expected, actual, path: str = "") -> str | None:
     (``1`` and ``1.0``, ``True`` and ``1`` differ). Dict keys are visited in
     sorted order so the answer is stable; list items in order, a length
     mismatch reported before the items.
+
+    The root call applies the frozen comparison policy's paired masks first
+    (generated ``mob_id`` / ``uuid`` values, and a ``127.0.0.1`` URL that
+    differs only by port) so both sides show ``<volatile>`` before the walk.
     """
+    if path == "":
+        expected, actual = align_compared(expected, actual)
     if type(expected) is not type(actual):
         return f"{path or '/'}: expected {_short(expected)} got {_short(actual)}"
     if isinstance(expected, dict):

@@ -8,7 +8,7 @@ provenance retains the version known at capture; the replay artifact separately
 binds frozen config, source bytes and loaded implementation identity for the
 policy executed during comparison.
 
-Three rules, in order:
+Five rules, in order:
 
 1. Keys that Mongo-style document encoders add (``_id``, ``$oid``, ``$date``)
    are dropped: they are generated per insert and carry no behaviour.
@@ -19,6 +19,14 @@ Three rules, in order:
 3. A string VALUE shaped like a datetime (``DATETIME``) is replaced by
    ``<volatile-datetime>`` wherever it appears, because systems emit timestamps
    under names no key pattern anticipates.
+4. A key named exactly ``mob_id`` or ``uuid`` whose value is a UUID is replaced
+   by ``<volatile>``. The key stays in the object. A UUID under any other name,
+   including a fixture company id, is compared as written. ``fax`` and
+   ``status`` are not volatile. An equal UUID is never deleted to manufacture
+   a match against a missing key.
+5. When both sides are compared, a URL is replaced by ``<volatile>`` on both
+   sides only when the host is ``127.0.0.1`` and the port is the only
+   difference. A different scheme, path, query, or host stays visible.
 
 The policy is idempotent: normalizing a normalized value changes nothing, which
 is what lets both sides be normalized without worrying whether one already was.
@@ -36,9 +44,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-NORMALIZATION_VERSION = "v2"
+NORMALIZATION_VERSION = "v3"
 POLICY_IDENTITY_V1 = "capcov-vector-comparison-policy/v1"
-POLICY_IDENTITY_FORMAT = "capcov-vector-comparison-policy/v2"
+POLICY_IDENTITY_V2 = "capcov-vector-comparison-policy/v2"
+POLICY_IDENTITY_FORMAT = "capcov-vector-comparison-policy/v3"
 
 VOLATILE_KEY = re.compile(
     r"(_at$|_date$|^date|modified|created$|updated|timestamp|expires|token|^transaction$)", re.I
@@ -46,10 +55,20 @@ VOLATILE_KEY = re.compile(
 DATETIME = re.compile(
     r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$"
 )
+# Exact names only. participant_uuid and company_id are fixture identity.
+GENERATED_ID_KEYS = frozenset({"mob_id", "uuid"})
+UUID_VALUE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+LOOPBACK_URL = re.compile(
+    r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*)://127\.0\.0\.1:"
+    r"(?P<port>[0-9]+)(?P<rest>[/?#].*)?$"
+)
 DROPPED_KEYS = frozenset({"_id", "$oid", "$date"})
 
 MASK_VOLATILE = "<volatile>"
 MASK_DATETIME = "<volatile-datetime>"
+_align_compared = None
 
 try:
     # Pin the module location and bytes observed during import. Replay checks
@@ -82,15 +101,25 @@ class FrozenComparisonPolicy:
     mask_datetime: str
     preserved_empty_volatile_values: tuple
     extra_volatile_keys: frozenset[str]
+    generated_id_keys: frozenset[str]
+    uuid_value_pattern: str
+    uuid_value_flags: int
+    loopback_url_pattern: str
+    loopback_url_flags: int
     source_sha256: str
     implementation_sha256: str
     python_implementation: str
     python_version: str
     _normalizer: object = field(repr=False, compare=False)
+    _align: object = field(repr=False, compare=False)
 
     def normalize(self, value):
         """Apply the closure built from this policy's frozen values."""
         return self._normalizer(value)
+
+    def align(self, left, right):
+        """Mask paired volatile values on both sides without dropping keys."""
+        return self._align(left, right)
 
     def identity(self) -> dict:
         config = {
@@ -104,6 +133,11 @@ class FrozenComparisonPolicy:
             "mask_datetime": self.mask_datetime,
             "preserved_empty_volatile_values": list(self.preserved_empty_volatile_values),
             "extra_volatile_keys": sorted(self.extra_volatile_keys),
+            "generated_id_keys": sorted(self.generated_id_keys),
+            "uuid_value_pattern": self.uuid_value_pattern,
+            "uuid_value_flags": self.uuid_value_flags,
+            "loopback_url_pattern": self.loopback_url_pattern,
+            "loopback_url_flags": self.loopback_url_flags,
             "python_implementation": self.python_implementation,
             "python_version": self.python_version,
         }
@@ -126,12 +160,16 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
     bytecode is described as loaded; drift of the source file since import is
     refused before replay publication. This is bookkeeping, not authentication.
     """
+    global _align_compared
     if _IMPORTED_SOURCE_SHA256 is None:
         raise RuntimeError("cannot identify the imported comparison-policy source")
     version = NORMALIZATION_VERSION
     volatile_pattern, volatile_flags = VOLATILE_KEY.pattern, int(VOLATILE_KEY.flags)
     datetime_pattern, datetime_flags = DATETIME.pattern, int(DATETIME.flags)
+    uuid_pattern, uuid_flags = UUID_VALUE.pattern, int(UUID_VALUE.flags)
+    loopback_pattern, loopback_flags = LOOPBACK_URL.pattern, int(LOOPBACK_URL.flags)
     dropped_keys = frozenset(DROPPED_KEYS)
+    generated_keys = frozenset(GENERATED_ID_KEYS)
     mask_volatile, mask_datetime = MASK_VOLATILE, MASK_DATETIME
     preserved_empty = (None, "", 0)
     extra = frozenset(extra_volatile_keys)
@@ -142,11 +180,16 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
     dict_type, list_type, tuple_type, str_type = dict, list, tuple, str
     volatile_re = re.compile(volatile_pattern, volatile_flags)
     datetime_re = re.compile(datetime_pattern, datetime_flags)
+    uuid_re = re.compile(uuid_pattern, uuid_flags)
+    loopback_re = re.compile(loopback_pattern, loopback_flags)
 
     def key_is_volatile(key):
         if not is_instance(key, str_type):
             return False
         return to_bool(volatile_re.search(key)) or key in extra
+
+    def value_is_uuid(item):
+        return is_instance(item, str_type) and to_bool(uuid_re.match(item))
 
     def normalize_value(value):
         if is_instance(value, dict_type):
@@ -155,6 +198,10 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
                 if key in dropped_keys:
                     continue
                 if key_is_volatile(key) and item not in preserved_empty:
+                    out[key] = mask_volatile
+                elif key in generated_keys and value_is_uuid(item):
+                    # Keep the key. Deleting an equal UUID would make a missing
+                    # key on the other side compare equal.
                     out[key] = mask_volatile
                 else:
                     out[key] = normalize_value(item)
@@ -167,9 +214,51 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
             return mask_datetime
         return value
 
+    def ports_only(left, right):
+        left_url = loopback_re.match(left)
+        right_url = loopback_re.match(right)
+        if left_url is None or right_url is None:
+            return False
+        same_rest = (left_url.group("rest") or "") == (right_url.group("rest") or "")
+        return (left_url.group("scheme") == right_url.group("scheme") and same_rest
+                and left_url.group("port") != right_url.group("port"))
+
+    def align_pair(left, right):
+        if is_instance(left, dict_type) and is_instance(right, dict_type):
+            out_left, out_right = {}, {}
+            for key in set(left) | set(right):
+                if key not in right:
+                    out_left[key] = left[key]
+                    continue
+                if key not in left:
+                    out_right[key] = right[key]
+                    continue
+                left_item, right_item = left[key], right[key]
+                if key in generated_keys and value_is_uuid(left_item) and value_is_uuid(right_item):
+                    out_left[key] = mask_volatile
+                    out_right[key] = mask_volatile
+                    continue
+                paired_left, paired_right = align_pair(left_item, right_item)
+                out_left[key] = paired_left
+                out_right[key] = paired_right
+            return out_left, out_right
+        if is_instance(left, list_type) and is_instance(right, list_type):
+            shared = min(len(left), len(right))
+            paired = [align_pair(left[index], right[index]) for index in range(shared)]
+            return ([item[0] for item in paired] + list(left[shared:]),
+                    [item[1] for item in paired] + list(right[shared:]))
+        if is_instance(left, str_type) and is_instance(right, str_type) and ports_only(left, right):
+            return mask_volatile, mask_volatile
+        return left, right
+
     implementation = hashlib.sha256(
-        marshal.dumps(key_is_volatile.__code__) + marshal.dumps(normalize_value.__code__)
+        marshal.dumps(key_is_volatile.__code__)
+        + marshal.dumps(value_is_uuid.__code__)
+        + marshal.dumps(normalize_value.__code__)
+        + marshal.dumps(ports_only.__code__)
+        + marshal.dumps(align_pair.__code__)
     ).hexdigest()
+    _align_compared = align_pair
     return FrozenComparisonPolicy(
         normalization_version=version,
         volatile_key_pattern=volatile_pattern,
@@ -181,11 +270,17 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
         mask_datetime=mask_datetime,
         preserved_empty_volatile_values=preserved_empty,
         extra_volatile_keys=extra,
+        generated_id_keys=generated_keys,
+        uuid_value_pattern=uuid_pattern,
+        uuid_value_flags=uuid_flags,
+        loopback_url_pattern=loopback_pattern,
+        loopback_url_flags=loopback_flags,
         source_sha256=_IMPORTED_SOURCE_SHA256,
         implementation_sha256=implementation,
         python_implementation=sys.implementation.name,
         python_version=sys.version.split()[0],
         _normalizer=normalize_value,
+        _align=align_pair,
     )
 
 
@@ -224,7 +319,7 @@ def validate_comparison_policy_identity(identity) -> bool:
             "datetime_pattern", "datetime_flags", "dropped_keys", "mask_volatile",
             "mask_datetime", "preserved_empty_volatile_values", "extra_volatile_keys",
         }
-    elif identity_format == POLICY_IDENTITY_FORMAT:
+    elif identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_FORMAT):
         fields = {"format", "normalization_version", "source_sha256", "implementation_sha256",
                   "config", "config_sha256", "policy_sha256"}
         config_fields = {
@@ -233,6 +328,11 @@ def validate_comparison_policy_identity(identity) -> bool:
             "mask_datetime", "preserved_empty_volatile_values", "extra_volatile_keys",
             "python_implementation", "python_version",
         }
+        if identity_format == POLICY_IDENTITY_FORMAT:
+            config_fields = config_fields | {
+                "generated_id_keys", "uuid_value_pattern", "uuid_value_flags",
+                "loopback_url_pattern", "loopback_url_flags",
+            }
     else:
         return False
     if set(identity) != fields:
@@ -245,7 +345,7 @@ def validate_comparison_policy_identity(identity) -> bool:
             or not isinstance(source_digest, str)
             or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None):
         return False
-    if (identity_format == POLICY_IDENTITY_FORMAT
+    if (identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_FORMAT)
             and (not isinstance(implementation_digest, str)
                  or re.fullmatch(r"[0-9a-f]{64}", implementation_digest) is None)):
         return False
@@ -263,11 +363,18 @@ def validate_comparison_policy_identity(identity) -> bool:
             or not isinstance(config.get("preserved_empty_volatile_values"), list)
             or not isinstance(config.get("extra_volatile_keys"), list)
             or any(not isinstance(item, str) for item in config["extra_volatile_keys"])
-            or (identity_format == POLICY_IDENTITY_FORMAT
+            or (identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_FORMAT)
                 and (not isinstance(config.get("python_implementation"), str)
                      or not config["python_implementation"]
                      or not isinstance(config.get("python_version"), str)
-                     or not config["python_version"]))):
+                     or not config["python_version"]))
+            or (identity_format == POLICY_IDENTITY_FORMAT
+                and (not isinstance(config.get("generated_id_keys"), list)
+                     or any(not isinstance(item, str) for item in config["generated_id_keys"])
+                     or not isinstance(config.get("uuid_value_pattern"), str)
+                     or type(config.get("uuid_value_flags")) is not int
+                     or not isinstance(config.get("loopback_url_pattern"), str)
+                     or type(config.get("loopback_url_flags")) is not int))):
         return False
     config_digest = identity.get("config_sha256")
     policy_digest = identity.get("policy_sha256")
@@ -278,6 +385,17 @@ def validate_comparison_policy_identity(identity) -> bool:
         return False
     core = {key: value for key, value in identity.items() if key != "policy_sha256"}
     return _json_sha256(core) == policy_digest
+
+
+def align_compared(left, right):
+    """Return both sides with paired volatile values masked.
+
+    Uses the aligner captured by the most recent frozen policy. Keys are never
+    removed: an equal ``mob_id`` or ``uuid`` becomes ``<volatile>`` in place.
+    """
+    if _align_compared is None:
+        freeze_comparison_policy()
+    return _align_compared(left, right)
 
 
 def is_volatile_key(key: object, extra_volatile_keys: tuple[str, ...] | frozenset[str] = ()) -> bool:

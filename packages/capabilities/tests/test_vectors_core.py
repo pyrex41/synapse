@@ -249,6 +249,37 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize.normalize(None), None)
         self.assertEqual(normalize.normalize(("a", "2026-01-02 03:04:05")), ["a", "<volatile-datetime>"])
 
+    def test_policy_identity_is_v3_and_historical_v2_still_validates(self) -> None:
+        identity = normalize.comparison_policy_identity()
+        self.assertEqual(identity["format"], normalize.POLICY_IDENTITY_FORMAT)
+        self.assertEqual(identity["normalization_version"], "v3")
+        self.assertEqual(identity["config"]["generated_id_keys"], ["mob_id", "uuid"])
+        self.assertTrue(normalize.validate_comparison_policy_identity(identity))
+        config = {
+            "normalization_version": "v2",
+            "volatile_key_pattern": "x",
+            "volatile_key_flags": 0,
+            "datetime_pattern": "y",
+            "datetime_flags": 0,
+            "dropped_keys": ["_id"],
+            "mask_volatile": "<volatile>",
+            "mask_datetime": "<volatile-datetime>",
+            "preserved_empty_volatile_values": [None, "", 0],
+            "extra_volatile_keys": [],
+            "python_implementation": "cpython",
+            "python_version": "3.12.0",
+        }
+        core = {
+            "format": normalize.POLICY_IDENTITY_V2,
+            "normalization_version": "v2",
+            "source_sha256": "a" * 64,
+            "implementation_sha256": "b" * 64,
+            "config": config,
+            "config_sha256": normalize._json_sha256(config),
+        }
+        historical = {**core, "policy_sha256": normalize._json_sha256(core)}
+        self.assertTrue(normalize.validate_comparison_policy_identity(historical))
+
 
 def inspection(rows=None, collections=None, queues=None, redis_keys=()):
     return {"rows": rows or {}, "collections": collections or {}, "queues": queues or {}, "redis_keys": list(redis_keys)}
@@ -324,6 +355,65 @@ class StoreDeltaTests(unittest.TestCase):
         self.assertEqual(diff.store_delta(before, after, extra_volatile_keys=("nonce",)), ({}, {}))
         self.assertIn("rows.orders", diff.store_delta(before, after)[0])
 
+    def test_fixture_uuid_differs_and_generated_mob_id_does_not(self) -> None:
+        fixture_uuid = "203ef929-464a-4aa8-a27a-b057df5e6794"
+        other_fixture_uuid = "469ae2d9-28e3-11ee-b3c6-02b30455eee7"
+        mob_a = "37be7ec4-b578-11f1-9294-4a879266366b"
+        mob_b = "e333e444-b632-11f1-a6eb-2677da3b84e6"
+        uuid_a = "45439ff8-43b9-4aec-850c-354e84d0b948"
+        uuid_b = "4caa222d-0a99-48ce-91e1-3b6f36b207b9"
+
+        def row(mob_id, row_uuid, fixture, **overrides):
+            body = {
+                "id": 6,
+                "mob_id": mob_id,
+                "uuid": row_uuid,
+                "participant_uuid": fixture,
+                "company_id": 9146,
+                "fax": "v",
+                "status": 1,
+            }
+            body.update(overrides)
+            return body
+
+        before = inspection(rows={"user": []})
+        recorded, _ = diff.store_delta(before, inspection(rows={"user": [row(mob_a, uuid_a, fixture_uuid)]}))
+        candidate, _ = diff.store_delta(before, inspection(rows={"user": [row(mob_b, uuid_b, fixture_uuid)]}))
+        # Different generated ids on the inserted row are not a difference.
+        self.assertIsNone(diff.first_difference(recorded, candidate))
+        inserted = recorded["rows.user"]["inserted"][0]
+        self.assertEqual(inserted["mob_id"], "<volatile>")
+        self.assertEqual(inserted["uuid"], "<volatile>")
+        self.assertIn("mob_id", inserted)
+        self.assertIn("uuid", inserted)
+        self.assertEqual(inserted["participant_uuid"], fixture_uuid)
+        self.assertEqual(inserted["company_id"], 9146)
+        self.assertEqual(inserted["fax"], "v")
+        self.assertEqual(inserted["status"], 1)
+
+        drifted, _ = diff.store_delta(
+            before, inspection(rows={"user": [row(mob_b, uuid_b, other_fixture_uuid)]}))
+        self.assertIsNotNone(diff.first_difference(recorded, drifted))
+        for field, value in (("fax", None), ("status", 2), ("company_id", 6449)):
+            with self.subTest(field=field):
+                changed, _ = diff.store_delta(
+                    before, inspection(rows={"user": [row(mob_b, uuid_b, fixture_uuid, **{field: value})]}))
+                self.assertIsNotNone(diff.first_difference(recorded, changed))
+
+        # An equal fixture UUID under a generated-id key stays in the object.
+        # Deleting it would make a missing key compare equal.
+        present = {"uuid": fixture_uuid, "company_id": fixture_uuid, "fax": "v", "status": 1}
+        masked = normalize.normalize(present)
+        self.assertEqual(masked["uuid"], "<volatile>")
+        self.assertEqual(masked["company_id"], fixture_uuid)
+        self.assertEqual(masked["fax"], "v")
+        self.assertEqual(masked["status"], 1)
+        self.assertIsNotNone(diff.first_difference(present, {"company_id": fixture_uuid, "fax": "v", "status": 1}))
+        aligned_left, aligned_right = normalize.align_compared(
+            {"uuid": fixture_uuid}, {"uuid": fixture_uuid})
+        self.assertEqual(aligned_left, {"uuid": "<volatile>"})
+        self.assertEqual(aligned_right, {"uuid": "<volatile>"})
+
 
 class FirstDifferenceTests(unittest.TestCase):
     def test_equal_is_none(self) -> None:
@@ -353,6 +443,30 @@ class FirstDifferenceTests(unittest.TestCase):
 
     def test_dict_keys_visited_in_sorted_order(self) -> None:
         self.assertEqual(diff.first_difference({"z": 1, "a": 1}, {"z": 2, "a": 2}), "/a: expected 1 got 2")
+
+    def test_loopback_url_port_is_volatile_and_other_url_differences_are_not(self) -> None:
+        recorded = "https://127.0.0.1:53577/x/project/8310/equipment/164457"
+        candidate = "https://127.0.0.1:50838/x/project/8310/equipment/164457"
+        self.assertIsNone(diff.first_difference({"equipment_url": recorded}, {"equipment_url": candidate}))
+        left, right = normalize.align_compared({"equipment_url": recorded}, {"equipment_url": candidate})
+        self.assertEqual(left, {"equipment_url": "<volatile>"})
+        self.assertEqual(right, {"equipment_url": "<volatile>"})
+        self.assertIsNone(diff.first_difference(
+            {"domain_url": "https://127.0.0.1:60129"},
+            {"domain_url": "https://127.0.0.1:50838"}))
+        activation = "https://127.0.0.1:53577/account/confirm-email?verifyToken=abc"
+        self.assertIsNone(diff.first_difference(
+            {"activation_url": activation},
+            {"activation_url": "https://127.0.0.1:58892/account/confirm-email?verifyToken=abc"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": activation},
+            {"activation_url": "http://127.0.0.1:58892/inquire/account/confirm-email?verifyToken=abc"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"equipment_url": recorded},
+            {"equipment_url": "https://127.0.0.1:50838/x/project/8310/equipment/999"}))
+        self.assertIsNotNone(diff.first_difference(
+            {"activation_url": activation},
+            {"activation_url": "https://fg_demo.invalid/account/confirm-email?verifyToken=abc"}))
 
 
 class ArtifactRoundTripTests(unittest.TestCase):

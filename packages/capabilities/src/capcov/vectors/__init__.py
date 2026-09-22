@@ -30,8 +30,9 @@ The design, fixed here and not per consumer:
   operation. A cell the manifest cannot fill is a named gap.
 * **Normalization happens at compare time.** Recorded vectors stay raw. The
   versioned policy in ``normalize`` masks volatile values (timestamps, tokens,
-  generated ids) on BOTH sides when they are compared, so a policy change never
-  forces a re-record. Replay artifact v3 separately binds frozen policy config,
+  generated ids, ``mob_id`` and ``uuid`` when the value is a UUID, and a
+  ``127.0.0.1`` URL whose only difference is the port) on BOTH sides when they
+  are compared, so a policy change never forces a re-record. Replay artifact v3 separately binds frozen policy config,
   imported source bytes and loaded normalizer code identity; replay refuses to
   publish if the source file drifts before publication. Recording provenance
   remains the capture-time account. These identities are local disclosures,
