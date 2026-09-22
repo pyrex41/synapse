@@ -151,8 +151,9 @@ def first_difference(expected, actual, path: str = "") -> str | None:
     mismatch reported before the items.
 
     The root call applies the frozen comparison policy's paired masks first
-    (generated ``mob_id`` / ``uuid`` values, and a ``127.0.0.1`` URL that
-    differs only by port) so both sides show ``<volatile>`` before the walk.
+    (generated ``mob_id`` / ``uuid`` values, a ``password`` that is 32 hex
+    characters on both sides, and a ``127.0.0.1`` URL that differs only by
+    port) so both sides show ``<volatile>`` before the walk.
     """
     if path == "":
         expected, actual = align_compared(expected, actual)

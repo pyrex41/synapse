@@ -8,7 +8,7 @@ provenance retains the version known at capture; the replay artifact separately
 binds frozen config, source bytes and loaded implementation identity for the
 policy executed during comparison.
 
-Five rules, in order:
+Six rules, in order:
 
 1. Keys that Mongo-style document encoders add (``_id``, ``$oid``, ``$date``)
    are dropped: they are generated per insert and carry no behaviour.
@@ -27,6 +27,10 @@ Five rules, in order:
 5. When both sides are compared, a URL is replaced by ``<volatile>`` on both
    sides only when the host is ``127.0.0.1`` and the port is the only
    difference. A different scheme, path, query, or host stays visible.
+6. When both sides are compared, a key named exactly ``password`` is replaced
+   by ``<volatile>`` on both sides only when both values are 32 hexadecimal
+   characters. An empty password, a short password, and any other key stay
+   as written and still compare.
 
 The policy is idempotent: normalizing a normalized value changes nothing, which
 is what lets both sides be normalized without worrying whether one already was.
@@ -44,10 +48,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-NORMALIZATION_VERSION = "v3"
+NORMALIZATION_VERSION = "v4"
 POLICY_IDENTITY_V1 = "capcov-vector-comparison-policy/v1"
 POLICY_IDENTITY_V2 = "capcov-vector-comparison-policy/v2"
-POLICY_IDENTITY_FORMAT = "capcov-vector-comparison-policy/v3"
+POLICY_IDENTITY_V3 = "capcov-vector-comparison-policy/v3"
+POLICY_IDENTITY_FORMAT = "capcov-vector-comparison-policy/v4"
 
 VOLATILE_KEY = re.compile(
     r"(_at$|_date$|^date|modified|created$|updated|timestamp|expires|token|^transaction$)", re.I
@@ -64,6 +69,9 @@ LOOPBACK_URL = re.compile(
     r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*)://127\.0\.0\.1:"
     r"(?P<port>[0-9]+)(?P<rest>[/?#].*)?$"
 )
+# Exact name. Only a 32-hex value on both sides is volatile.
+PASSWORD_KEYS = frozenset({"password"})
+HEX32_VALUE = re.compile(r"^[0-9a-fA-F]{32}$")
 DROPPED_KEYS = frozenset({"_id", "$oid", "$date"})
 
 MASK_VOLATILE = "<volatile>"
@@ -106,6 +114,9 @@ class FrozenComparisonPolicy:
     uuid_value_flags: int
     loopback_url_pattern: str
     loopback_url_flags: int
+    password_keys: frozenset[str]
+    hex32_value_pattern: str
+    hex32_value_flags: int
     source_sha256: str
     implementation_sha256: str
     python_implementation: str
@@ -138,6 +149,9 @@ class FrozenComparisonPolicy:
             "uuid_value_flags": self.uuid_value_flags,
             "loopback_url_pattern": self.loopback_url_pattern,
             "loopback_url_flags": self.loopback_url_flags,
+            "password_keys": sorted(self.password_keys),
+            "hex32_value_pattern": self.hex32_value_pattern,
+            "hex32_value_flags": self.hex32_value_flags,
             "python_implementation": self.python_implementation,
             "python_version": self.python_version,
         }
@@ -168,8 +182,10 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
     datetime_pattern, datetime_flags = DATETIME.pattern, int(DATETIME.flags)
     uuid_pattern, uuid_flags = UUID_VALUE.pattern, int(UUID_VALUE.flags)
     loopback_pattern, loopback_flags = LOOPBACK_URL.pattern, int(LOOPBACK_URL.flags)
+    hex32_pattern, hex32_flags = HEX32_VALUE.pattern, int(HEX32_VALUE.flags)
     dropped_keys = frozenset(DROPPED_KEYS)
     generated_keys = frozenset(GENERATED_ID_KEYS)
+    password_keys = frozenset(PASSWORD_KEYS)
     mask_volatile, mask_datetime = MASK_VOLATILE, MASK_DATETIME
     preserved_empty = (None, "", 0)
     extra = frozenset(extra_volatile_keys)
@@ -182,6 +198,7 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
     datetime_re = re.compile(datetime_pattern, datetime_flags)
     uuid_re = re.compile(uuid_pattern, uuid_flags)
     loopback_re = re.compile(loopback_pattern, loopback_flags)
+    hex32_re = re.compile(hex32_pattern, hex32_flags)
 
     def key_is_volatile(key):
         if not is_instance(key, str_type):
@@ -190,6 +207,9 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
 
     def value_is_uuid(item):
         return is_instance(item, str_type) and to_bool(uuid_re.match(item))
+
+    def value_is_hex32(item):
+        return is_instance(item, str_type) and to_bool(hex32_re.match(item))
 
     def normalize_value(value):
         if is_instance(value, dict_type):
@@ -238,6 +258,10 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
                     out_left[key] = mask_volatile
                     out_right[key] = mask_volatile
                     continue
+                if key in password_keys and value_is_hex32(left_item) and value_is_hex32(right_item):
+                    out_left[key] = mask_volatile
+                    out_right[key] = mask_volatile
+                    continue
                 paired_left, paired_right = align_pair(left_item, right_item)
                 out_left[key] = paired_left
                 out_right[key] = paired_right
@@ -254,6 +278,7 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
     implementation = hashlib.sha256(
         marshal.dumps(key_is_volatile.__code__)
         + marshal.dumps(value_is_uuid.__code__)
+        + marshal.dumps(value_is_hex32.__code__)
         + marshal.dumps(normalize_value.__code__)
         + marshal.dumps(ports_only.__code__)
         + marshal.dumps(align_pair.__code__)
@@ -275,6 +300,9 @@ def freeze_comparison_policy(extra_volatile_keys=()) -> FrozenComparisonPolicy:
         uuid_value_flags=uuid_flags,
         loopback_url_pattern=loopback_pattern,
         loopback_url_flags=loopback_flags,
+        password_keys=password_keys,
+        hex32_value_pattern=hex32_pattern,
+        hex32_value_flags=hex32_flags,
         source_sha256=_IMPORTED_SOURCE_SHA256,
         implementation_sha256=implementation,
         python_implementation=sys.implementation.name,
@@ -319,7 +347,7 @@ def validate_comparison_policy_identity(identity) -> bool:
             "datetime_pattern", "datetime_flags", "dropped_keys", "mask_volatile",
             "mask_datetime", "preserved_empty_volatile_values", "extra_volatile_keys",
         }
-    elif identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_FORMAT):
+    elif identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_V3, POLICY_IDENTITY_FORMAT):
         fields = {"format", "normalization_version", "source_sha256", "implementation_sha256",
                   "config", "config_sha256", "policy_sha256"}
         config_fields = {
@@ -328,10 +356,14 @@ def validate_comparison_policy_identity(identity) -> bool:
             "mask_datetime", "preserved_empty_volatile_values", "extra_volatile_keys",
             "python_implementation", "python_version",
         }
-        if identity_format == POLICY_IDENTITY_FORMAT:
+        if identity_format in (POLICY_IDENTITY_V3, POLICY_IDENTITY_FORMAT):
             config_fields = config_fields | {
                 "generated_id_keys", "uuid_value_pattern", "uuid_value_flags",
                 "loopback_url_pattern", "loopback_url_flags",
+            }
+        if identity_format == POLICY_IDENTITY_FORMAT:
+            config_fields = config_fields | {
+                "password_keys", "hex32_value_pattern", "hex32_value_flags",
             }
     else:
         return False
@@ -345,7 +377,7 @@ def validate_comparison_policy_identity(identity) -> bool:
             or not isinstance(source_digest, str)
             or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None):
         return False
-    if (identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_FORMAT)
+    if (identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_V3, POLICY_IDENTITY_FORMAT)
             and (not isinstance(implementation_digest, str)
                  or re.fullmatch(r"[0-9a-f]{64}", implementation_digest) is None)):
         return False
@@ -363,18 +395,23 @@ def validate_comparison_policy_identity(identity) -> bool:
             or not isinstance(config.get("preserved_empty_volatile_values"), list)
             or not isinstance(config.get("extra_volatile_keys"), list)
             or any(not isinstance(item, str) for item in config["extra_volatile_keys"])
-            or (identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_FORMAT)
+            or (identity_format in (POLICY_IDENTITY_V2, POLICY_IDENTITY_V3, POLICY_IDENTITY_FORMAT)
                 and (not isinstance(config.get("python_implementation"), str)
                      or not config["python_implementation"]
                      or not isinstance(config.get("python_version"), str)
                      or not config["python_version"]))
-            or (identity_format == POLICY_IDENTITY_FORMAT
+            or (identity_format in (POLICY_IDENTITY_V3, POLICY_IDENTITY_FORMAT)
                 and (not isinstance(config.get("generated_id_keys"), list)
                      or any(not isinstance(item, str) for item in config["generated_id_keys"])
                      or not isinstance(config.get("uuid_value_pattern"), str)
                      or type(config.get("uuid_value_flags")) is not int
                      or not isinstance(config.get("loopback_url_pattern"), str)
-                     or type(config.get("loopback_url_flags")) is not int))):
+                     or type(config.get("loopback_url_flags")) is not int))
+            or (identity_format == POLICY_IDENTITY_FORMAT
+                and (not isinstance(config.get("password_keys"), list)
+                     or any(not isinstance(item, str) for item in config["password_keys"])
+                     or not isinstance(config.get("hex32_value_pattern"), str)
+                     or type(config.get("hex32_value_flags")) is not int))):
         return False
     config_digest = identity.get("config_sha256")
     policy_digest = identity.get("policy_sha256")
@@ -391,7 +428,8 @@ def align_compared(left, right):
     """Return both sides with paired volatile values masked.
 
     Uses the aligner captured by the most recent frozen policy. Keys are never
-    removed: an equal ``mob_id`` or ``uuid`` becomes ``<volatile>`` in place.
+    removed: an equal ``mob_id`` or ``uuid`` becomes ``<volatile>`` in place,
+    and a ``password`` that is 32 hex characters on both sides does too.
     """
     if _align_compared is None:
         freeze_comparison_policy()

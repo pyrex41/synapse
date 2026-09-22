@@ -249,11 +249,12 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize.normalize(None), None)
         self.assertEqual(normalize.normalize(("a", "2026-01-02 03:04:05")), ["a", "<volatile-datetime>"])
 
-    def test_policy_identity_is_v3_and_historical_v2_still_validates(self) -> None:
+    def test_policy_identity_is_v4_and_historical_v3_still_validates(self) -> None:
         identity = normalize.comparison_policy_identity()
         self.assertEqual(identity["format"], normalize.POLICY_IDENTITY_FORMAT)
-        self.assertEqual(identity["normalization_version"], "v3")
+        self.assertEqual(identity["normalization_version"], "v4")
         self.assertEqual(identity["config"]["generated_id_keys"], ["mob_id", "uuid"])
+        self.assertEqual(identity["config"]["password_keys"], ["password"])
         self.assertTrue(normalize.validate_comparison_policy_identity(identity))
         config = {
             "normalization_version": "v2",
@@ -279,6 +280,25 @@ class NormalizeTests(unittest.TestCase):
         }
         historical = {**core, "policy_sha256": normalize._json_sha256(core)}
         self.assertTrue(normalize.validate_comparison_policy_identity(historical))
+        config_v3 = {
+            **config,
+            "normalization_version": "v3",
+            "generated_id_keys": ["mob_id", "uuid"],
+            "uuid_value_pattern": "x",
+            "uuid_value_flags": 0,
+            "loopback_url_pattern": "y",
+            "loopback_url_flags": 0,
+        }
+        core_v3 = {
+            "format": normalize.POLICY_IDENTITY_V3,
+            "normalization_version": "v3",
+            "source_sha256": "a" * 64,
+            "implementation_sha256": "b" * 64,
+            "config": config_v3,
+            "config_sha256": normalize._json_sha256(config_v3),
+        }
+        historical_v3 = {**core_v3, "policy_sha256": normalize._json_sha256(core_v3)}
+        self.assertTrue(normalize.validate_comparison_policy_identity(historical_v3))
 
 
 def inspection(rows=None, collections=None, queues=None, redis_keys=()):
@@ -467,6 +487,33 @@ class FirstDifferenceTests(unittest.TestCase):
         self.assertIsNotNone(diff.first_difference(
             {"activation_url": activation},
             {"activation_url": "https://fg_demo.invalid/account/confirm-email?verifyToken=abc"}))
+
+    def test_password_hex32_is_volatile_and_other_passwords_compare(self) -> None:
+        recorded = "0123456789abcdef0123456789abcdef"
+        candidate = "fedcba9876543210fedcba9876543210"
+        self.assertIsNone(diff.first_difference({"password": recorded}, {"password": candidate}))
+        left, right = normalize.align_compared({"password": recorded}, {"password": candidate})
+        self.assertEqual(left, {"password": "<volatile>"})
+        self.assertEqual(right, {"password": "<volatile>"})
+        same_left, same_right = normalize.align_compared({"password": recorded}, {"password": recorded})
+        self.assertEqual(same_left, {"password": "<volatile>"})
+        self.assertEqual(same_right, {"password": "<volatile>"})
+        empty_left, empty_right = normalize.align_compared({"password": ""}, {"password": ""})
+        self.assertEqual(empty_left, {"password": ""})
+        self.assertEqual(empty_right, {"password": ""})
+        self.assertIsNotNone(diff.first_difference({"password": ""}, {"password": candidate}))
+        self.assertIsNotNone(diff.first_difference({"password": ""}, {"password": "short"}))
+        short_left, short_right = normalize.align_compared({"password": "short"}, {"password": "short"})
+        self.assertEqual(short_left, {"password": "short"})
+        self.assertEqual(short_right, {"password": "short"})
+        self.assertIsNotNone(diff.first_difference({"password": "short"}, {"password": "other"}))
+        self.assertIsNotNone(diff.first_difference({"password": "short"}, {"password": candidate}))
+        other_left, other_right = normalize.align_compared({"secret": recorded}, {"secret": candidate})
+        self.assertEqual(other_left, {"secret": recorded})
+        self.assertEqual(other_right, {"secret": candidate})
+        self.assertIsNotNone(diff.first_difference({"secret": recorded}, {"secret": candidate}))
+        self.assertEqual(normalize.normalize({"password": recorded, "secret": recorded}),
+                         {"password": recorded, "secret": recorded})
 
 
 class ArtifactRoundTripTests(unittest.TestCase):
